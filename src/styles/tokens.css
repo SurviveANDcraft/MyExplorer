@@ -1,0 +1,113 @@
+:root {
+  /* type */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+  --fs: 13px;
+  --fs-sm: 12px;
+  --fs-xs: 11px;
+
+  /* shape */
+  --r-panel: 8px;
+  --r-row: 6px;
+  --r-sm: 4px;
+  --row-h: 32px;
+
+  /* layout */
+  --title-h: 40px;
+  --nav-h: 44px;
+  --cmd-h: 36px;
+  --status-h: 28px;
+
+  /* motion */
+  --speed: 1;
+  --ease-in: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.3, 0, 1, 1);
+  --t-press: calc(90ms * var(--speed));
+  --t-nav: calc(140ms * var(--speed));
+  --t-menu: calc(180ms * var(--speed));
+  --t-pane: calc(220ms * var(--speed));
+
+  /* accent (set at runtime) */
+  --accent: #2f6fea;
+  --on-accent: #fff;
+  --accent-text: color-mix(in oklab, var(--accent) 88%, var(--text));
+  --sel: color-mix(in srgb, var(--accent) 15%, transparent);
+  --sel-hover: color-mix(in srgb, var(--accent) 21%, transparent);
+  --sel-line: color-mix(in srgb, var(--accent) 42%, transparent);
+  --focus-ring: color-mix(in srgb, var(--accent) 75%, transparent);
+  --mark: color-mix(in srgb, var(--accent) 26%, transparent);
+
+  color-scheme: light;
+  --mica: #eef0f4;
+  --surface: #fcfcfd;
+  --surface-sunk: #f5f6f8;
+  --float: #ffffff;
+  --scrim: rgba(18, 20, 24, 0.22);
+  --text: #1a1b1e;
+  --text-2: rgba(26, 27, 30, 0.64);
+  --text-3: rgba(26, 27, 30, 0.44);
+  --hairline: rgba(0, 0, 0, 0.075);
+  --hairline-strong: rgba(0, 0, 0, 0.11);
+  --hover: rgba(0, 0, 0, 0.042);
+  --pressed: rgba(0, 0, 0, 0.07);
+  --control: rgba(255, 255, 255, 0.7);
+  --control-hover: rgba(255, 255, 255, 0.95);
+  --control-line: rgba(0, 0, 0, 0.085);
+  --tab-active: #fcfcfd;
+  --shadow-float: 0 10px 32px -6px rgba(16, 20, 28, 0.18), 0 2px 6px rgba(16, 20, 28, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --danger: #c42b1c;
+  --danger-tint: rgba(196, 43, 28, 0.09);
+  --success: #0f7b45;
+  --warn: #b25e09;
+  --folder-back: #e4a83a;
+  --folder-front: #f6c453;
+  --glyph-page: #ffffff;
+  --glyph-line: rgba(0, 0, 0, 0.28);
+  --skeleton: rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mica: #1d1f23;
+  --surface: #26272b;
+  --surface-sunk: #212226;
+  --float: #2c2d31;
+  --scrim: rgba(0, 0, 0, 0.42);
+  --text: #f1f2f4;
+  --text-2: rgba(241, 242, 244, 0.64);
+  --text-3: rgba(241, 242, 244, 0.42);
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.1);
+  --hover: rgba(255, 255, 255, 0.05);
+  --pressed: rgba(255, 255, 255, 0.08);
+  --control: rgba(255, 255, 255, 0.055);
+  --control-hover: rgba(255, 255, 255, 0.085);
+  --control-line: rgba(255, 255, 255, 0.07);
+  --tab-active: #26272b;
+  --shadow-float: 0 12px 36px -6px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --accent-text: color-mix(in oklab, var(--accent) 70%, #fff);
+  --sel: color-mix(in srgb, var(--accent) 24%, transparent);
+  --sel-hover: color-mix(in srgb, var(--accent) 30%, transparent);
+  --sel-line: color-mix(in srgb, var(--accent) 55%, transparent);
+  --mark: color-mix(in srgb, var(--accent) 38%, transparent);
+  --danger: #ff8a80;
+  --danger-tint: rgba(255, 99, 85, 0.14);
+  --success: #6ccb8f;
+  --warn: #f0b35a;
+  --folder-back: #c88d24;
+  --folder-front: #e8b54a;
+  --glyph-page: #3a3b40;
+  --glyph-line: rgba(255, 255, 255, 0.3);
+  --skeleton: rgba(255, 255, 255, 0.05);
+}
+
+:root[data-density="compact"] {
+  --row-h: 26px;
+  --nav-h: 40px;
+  --cmd-h: 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --speed: 0 !important; }
+}

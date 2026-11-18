@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MyExplorer",
+  "version": "0.1.0",
+  "identifier": "dev.myexplorer.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1450",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "MyExplorer",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "visible": false,
+        "dragDropEnabled": true,
+        "windowEffects": { "effects": ["mica"] }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost http://icon.localhost http://thumb.localhost; media-src 'self' blob: asset: http://asset.localhost; frame-src 'self' asset: http://asset.localhost; font-src 'self' data: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost http://icon.localhost http://thumb.localhost; object-src 'none'",
+      "devCsp": "default-src 'self' ipc: http://ipc.localhost http://localhost:1450; script-src 'self' http://localhost:1450; style-src 'self' 'unsafe-inline' http://localhost:1450; img-src 'self' data: blob: asset: http://asset.localhost http://icon.localhost http://thumb.localhost http://localhost:1450; media-src 'self' blob: asset: http://asset.localhost; frame-src 'self' asset: http://asset.localhost; font-src 'self' data: asset: http://asset.localhost http://localhost:1450; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost http://icon.localhost http://thumb.localhost http://localhost:1450 ws://localhost:1450; object-src 'none'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": { "allow": ["**"], "requireLiteralLeadingDot": false }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "MyExplorer",
+    "shortDescription": "Fast file explorer for Windows",
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  }
+}
