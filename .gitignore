@@ -12,3 +12,4 @@ Thumbs.db
 .env*
 src-tauri/bin/
 .cargo/config.toml
+CLAUDE.md

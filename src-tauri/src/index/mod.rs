@@ -618,3 +618,76 @@ pub(crate) fn file_candidates(accept: impl Fn(&[u8], u64) -> bool, include_hidde
     }
     Some(out)
 }
+
+/// Totals for one subtree, read from the index (no disk access).
+#[derive(Default, Clone)]
+pub struct Tally {
+    pub size: u64,
+    pub files: u64,
+    pub folders: u64,
+    /// Folders the index lists but never descends into (node_modules, .git, …): the caller
+    /// sizes these on disk and adds them.
+    pub skipped: Vec<String>,
+}
+
+/// `(name, is_dir, totals)` for each direct child of the folder at `path`, from the index.
+/// None while the index isn't fully built (its numbers could be stale) or when `path` isn't
+/// indexed (other drives, inside an excluded folder): the caller then walks the disk.
+pub fn child_sizes(path: &str) -> Option<Vec<(String, bool, Tally)>> {
+    use rayon::prelude::*;
+    if ENGINE.status.lock().state != "ready" || store::path_excluded(path) {
+        return None;
+    }
+    let ix = ENGINE.idx.read();
+    let id = ix.resolve(path)?;
+    if ix.flags[id as usize] & F_DIR == 0 {
+        return None;
+    }
+    fn tally(ix: &Index, d: u32, dpath: &str, t: &mut Tally) {
+        for c in ix.children(d) {
+            let f = ix.flags[c as usize];
+            if f & F_DIR == 0 {
+                t.files += 1;
+                t.size += ix.size[c as usize];
+                continue;
+            }
+            t.folders += 1;
+            if f & F_LINK != 0 {
+                continue;
+            }
+            let name = ix.name(c);
+            let cpath = join(dpath, name);
+            if store::excluded_dir(dpath, name) {
+                t.skipped.push(cpath);
+            } else {
+                tally(ix, c, &cpath, t);
+            }
+        }
+    }
+    let base = ix.path(id);
+    let kids: Vec<u32> = ix.children(id).collect();
+    let ixr: &Index = &ix;
+    Some(
+        kids.par_iter()
+            .map(|&c| {
+                let f = ixr.flags[c as usize];
+                let name = ixr.name(c).to_string();
+                let mut t = Tally::default();
+                if f & F_DIR == 0 {
+                    t.files = 1;
+                    t.size = ixr.size[c as usize];
+                    return (name, false, t);
+                }
+                if f & F_LINK == 0 {
+                    let cpath = join(&base, &name);
+                    if store::excluded_dir(&base, &name) {
+                        t.skipped.push(cpath);
+                    } else {
+                        tally(ixr, c, &cpath, &mut t);
+                    }
+                }
+                (name, true, t)
+            })
+            .collect(),
+    )
+}

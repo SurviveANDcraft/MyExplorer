@@ -1,6 +1,6 @@
 //! Recursive folder size, computed as fast as the disk allows:
 //! one FindFirstFileExW (large fetch, basic info) pass per directory, subtrees fanned out
-//! across the rayon pool, junctions/symlinks not followed. A newer request cancels older
+//! across the rayon pool, junctions/symlinks not followed (cloud folders are). A newer request cancels older
 //! ones, and results (including big subtrees found along the way) are cached briefly so
 //! hovering back or drilling in is instant.
 
@@ -14,7 +14,14 @@ use serde::Serialize;
 
 use crate::error::AppResult;
 use crate::fs::for_each_entry;
-use crate::util::{join, FA_DIRECTORY, FA_REPARSE};
+use crate::fs::RawEntry;
+use crate::util::{attrs_to_flags, join, FA_DIRECTORY, FA_REPARSE, F_LINK};
+
+/// Junctions and symlinks are not followed (loops, double counting); OneDrive and other
+/// cloud folders are reparse points too, but real folders: those are counted.
+fn is_link(e: &RawEntry) -> bool {
+    e.attrs & FA_REPARSE != 0 && attrs_to_flags(e.attrs, Some(e.tag)) & F_LINK != 0
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +34,7 @@ pub struct DirSize {
 }
 
 impl DirSize {
-    fn add(mut self, o: DirSize) -> DirSize {
+    pub fn add(mut self, o: DirSize) -> DirSize {
         self.size += o.size;
         self.files += o.files;
         self.folders += o.folders;
@@ -72,9 +79,9 @@ pub fn invalidate(path: &str) {
     }
 }
 
-/// None when cancelled by a newer request.
-fn walk(dir: &str, gen: u64) -> Option<DirSize> {
-    if GEN.load(Ordering::Relaxed) != gen {
+/// None when cancelled by a newer request (`gen: None` = never cancelled, for `mx size`).
+fn walk(dir: &str, gen: Option<u64>) -> Option<DirSize> {
+    if gen.is_some_and(|g| GEN.load(Ordering::Relaxed) != g) {
         return None;
     }
     let k = key(dir);
@@ -86,7 +93,7 @@ fn walk(dir: &str, gen: u64) -> Option<DirSize> {
     let ok = for_each_entry(dir, |e| {
         if e.attrs & FA_DIRECTORY != 0 {
             own.folders += 1;
-            if e.attrs & FA_REPARSE == 0 {
+            if !is_link(e) {
                 subs.push(join(dir, &String::from_utf16_lossy(e.name)));
             }
         } else {
@@ -122,11 +129,58 @@ pub fn dir_size(path: &str) -> AppResult<Option<DirSize>> {
     }
     // The root itself must be readable; deeper failures only mark the result partial.
     let _ = crate::fs::attributes(path).ok_or_else(|| crate::error::AppError::from_win32(2, path))?;
-    let r = walk(path, gen);
+    let r = walk(path, Some(gen));
     if let Some(d) = r {
         store(k, d);
     }
     Ok(r)
+}
+
+/// Like `dir_size` but never cancelled (agents' `mx size`, which can run in parallel
+/// with each other and with the GUI's hover sizes).
+pub fn measure(path: &str) -> AppResult<DirSize> {
+    let k = key(path);
+    if let Some(d) = cached(&k) {
+        return Ok(d);
+    }
+    let _ = crate::fs::attributes(path).ok_or_else(|| crate::error::AppError::from_win32(2, path))?;
+    let d = walk(path, None).unwrap_or_default();
+    store(k, d);
+    Ok(d)
+}
+
+/// One entry directly inside a folder, with its total size (`dir` = folder).
+pub struct Child {
+    pub name: String,
+    pub dir: bool,
+    pub size: DirSize,
+}
+
+/// Direct children of `path`, each sized (subfolders recursively, in parallel), biggest first.
+pub fn children(path: &str) -> AppResult<Vec<Child>> {
+    let mut out: Vec<Child> = Vec::new();
+    let mut subs: Vec<String> = Vec::new();
+    for_each_entry(path, |e| {
+        let name = String::from_utf16_lossy(e.name);
+        if e.attrs & FA_DIRECTORY != 0 {
+            if !is_link(e) {
+                subs.push(name);
+            }
+        } else {
+            out.push(Child { name, dir: false, size: DirSize { size: e.size, files: 1, ..Default::default() } });
+        }
+    })?;
+    let dirs: Vec<Child> = subs
+        .into_par_iter()
+        .map(|name| {
+            let full = join(path, &name);
+            let size = measure(&full).unwrap_or(DirSize { partial: true, ..Default::default() });
+            Child { name, dir: true, size }
+        })
+        .collect();
+    out.extend(dirs);
+    out.sort_by(|a, b| b.size.size.cmp(&a.size.size));
+    Ok(out)
 }
 
 /// Cancel any in-flight size computation (pointer left the item).

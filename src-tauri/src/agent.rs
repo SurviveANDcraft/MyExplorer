@@ -20,6 +20,7 @@ use windows::Win32::System::Pipes::{
 };
 use windows_core::PCWSTR;
 
+use crate::dirsize::{self, DirSize};
 use crate::index::{self, query};
 use crate::types::{SearchHit, SearchOptions};
 use crate::util::*;
@@ -33,6 +34,10 @@ static IS_DAEMON: AtomicBool = AtomicBool::new(false);
 static LAST_REQ: AtomicI64 = AtomicI64::new(0);
 
 pub fn pipe_name() -> String {
+    // Same override as mx.exe: lets a test build serve next to the installed app.
+    if let Ok(p) = std::env::var("MX_PIPE") {
+        return p;
+    }
     let user = std::env::var("USERNAME").unwrap_or_default();
     let tag = if cfg!(debug_assertions) { "-dev" } else { "" };
     format!(r"\\.\pipe\myexplorer-mx{tag}-{user}")
@@ -188,6 +193,7 @@ fn request(body: &str) -> Option<Vec<u8>> {
 const USAGE: &str = "\
 mx — instant file search over the MyExplorer index (all fixed drives).
 usage: mx [opts] <query> [<query> ...]   each argument is one query; several run in parallel
+       mx size [-n N] <path> [<path> ...]   total size on disk; -n N = also the N biggest items inside
        mx status | mx stop
 opts:  -n N      results per query (default 20)
        -i PATH   only inside PATH (relative to cwd ok)
@@ -283,6 +289,7 @@ fn run(cwd: &str, args: &[String]) -> (u8, String) {
     match args.first().map(String::as_str) {
         None | Some("-h") | Some("--help") | Some("help") => return (0, USAGE.to_string()),
         Some("status") if args.len() == 1 => return (0, status_line()),
+        Some("size") | Some("du") => return run_size(cwd, &args[1..]),
         _ => {}
     }
     let req = match parse_args(cwd, args) {
@@ -332,6 +339,115 @@ fn run(cwd: &str, args: &[String]) -> (u8, String) {
         out.push_str(&format!("({:.1} ms)\n", t0.elapsed().as_secs_f64() * 1000.0));
     }
     (if any { 0 } else { 1 }, out)
+}
+
+/// `mx size`: recursive totals read from disk (everything, including node_modules/.git), not
+/// the index. Paths run in parallel; big subtrees stay cached 90 s (shared with the GUI).
+fn run_size(cwd: &str, args: &[String]) -> (u8, String) {
+    let mut top = 0usize;
+    let mut time = false;
+    let mut paths: Vec<String> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-n" | "--top" => match it.next().and_then(|v| v.parse::<usize>().ok()) {
+                Some(n) => top = n.min(MAX_LIMIT),
+                None => return (2, format!("mx size: -n needs a number\n{USAGE}")),
+            },
+            "-t" | "--time" => time = true,
+            s if s.starts_with("-n") && s[2..].parse::<usize>().is_ok() => top = s[2..].parse::<usize>().unwrap().min(MAX_LIMIT),
+            s if s.len() > 1 && s.starts_with('-') && !s.contains(['\\', '/']) => return (2, format!("mx size: unknown option {s}\n{USAGE}")),
+            _ => paths.push(a.clone()),
+        }
+    }
+    if paths.is_empty() {
+        paths.push(".".into());
+    }
+    let t0 = Instant::now();
+    let rel = norm_path(cwd);
+    let results: Vec<(String, Result<(DirSize, Vec<dirsize::Child>), String>)> = paths
+        .par_iter()
+        .map(|p| {
+            let full = resolve_path(cwd, p);
+            let r = (|| -> Result<_, String> {
+                let attrs = crate::fs::attributes(&full).ok_or("not found")?;
+                if attrs & FA_DIRECTORY == 0 {
+                    let size = std::fs::metadata(&full).map(|m| m.len()).map_err(|e| e.to_string())?;
+                    return Ok((DirSize { size, files: 1, ..Default::default() }, Vec::new()));
+                }
+                let kids = match index::child_sizes(&full) {
+                    // From the index (instant), plus the folders it doesn't descend into
+                    // (node_modules, .git, …) measured on disk.
+                    Some(v) => {
+                        let mut kids: Vec<dirsize::Child> = v
+                            .into_par_iter()
+                            .map(|(name, dir, t)| {
+                                let own = DirSize { size: t.size, files: t.files, folders: t.folders, partial: false };
+                                let size = t.skipped.par_iter()
+                                    .map(|s| dirsize::measure(s).unwrap_or(DirSize { partial: true, ..Default::default() }))
+                                    .reduce(DirSize::default, DirSize::add)
+                                    .add(own);
+                                dirsize::Child { name, dir, size }
+                            })
+                            .collect();
+                        kids.sort_by(|a, b| b.size.size.cmp(&a.size.size));
+                        kids
+                    }
+                    None => dirsize::children(&full).map_err(|e| e.to_string())?,
+                };
+                let d = kids.iter().fold(DirSize::default(), |mut a, c| {
+                    a.size += c.size.size;
+                    a.files += c.size.files;
+                    a.folders += c.size.folders + c.dir as u64;
+                    a.partial |= c.size.partial;
+                    a
+                });
+                Ok((d, kids))
+            })();
+            (full, r)
+        })
+        .collect();
+    let mut out = String::new();
+    let mut ok = false;
+    for (full, r) in results {
+        let shown = if full.trim_end_matches('\\').eq_ignore_ascii_case(rel.trim_end_matches('\\')) { ".".to_string() } else { display_path(&full, Some(&rel)) };
+        match r {
+            Err(e) => out.push_str(&format!("{shown}: {e}\n")),
+            Ok((d, kids)) => {
+                ok = true;
+                out.push_str(&format!("{:>6}  {} file{}, {} folder{}  {shown}{}\n", fmt_size(d.size), group(d.files), plural(d.files), group(d.folders), plural(d.folders),
+                    if d.partial { "  (partial: some folders unreadable)" } else { "" }));
+                for c in kids.iter().take(top) {
+                    let pct = if d.size > 0 { c.size.size as f64 * 100.0 / d.size as f64 } else { 0.0 };
+                    out.push_str(&format!("{:>6} {:>3.0}%  {}{}\n", fmt_size(c.size.size), pct, c.name, if c.dir { "\\" } else { "" }));
+                }
+                if kids.len() > top && top > 0 {
+                    out.push_str(&format!("… +{} more\n", kids.len() - top));
+                }
+            }
+        }
+    }
+    if time {
+        out.push_str(&format!("({:.1} ms)\n", t0.elapsed().as_secs_f64() * 1000.0));
+    }
+    (if ok { 0 } else { 1 }, out)
+}
+
+fn plural(n: u64) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+/// 1234567 → "1,234,567".
+fn group(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 struct Group {
@@ -459,6 +575,14 @@ mod tests {
         assert_eq!(display_path(r"C:\a\b\c.txt", Some(r"c:\A")), r"b\c.txt");
         assert_eq!(display_path(r"C:\ab\c.txt", Some(r"C:\a")), r"C:\ab\c.txt");
         assert_eq!(display_path(r"C:\x.txt", Some(r"C:\")), r"x.txt");
+    }
+
+    #[test]
+    fn grouping() {
+        assert_eq!(group(0), "0");
+        assert_eq!(group(999), "999");
+        assert_eq!(group(1000), "1,000");
+        assert_eq!(group(1234567), "1,234,567");
     }
 
     #[test]

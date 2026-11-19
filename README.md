@@ -23,6 +23,7 @@ Optional, in **Settings**:
 mx "invoice 2024" "ext:pdf factura"     # several queries in one call, run in parallel
 mx -i . "kind:code shell menu"          # only under the current folder
 mx -l -n 50 "modified:week report"      # with dates and sizes, more results
+mx size -n 10 ~                         # folder size + the 10 biggest items inside
 ```
 
 One query takes about 20 ms over millions of files, versus seconds to minutes for

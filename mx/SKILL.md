@@ -1,6 +1,6 @@
 ---
 name: mx
-description: Instant file/folder search by name across the whole PC (or any big folder) using the MyExplorer index — ~20 ms over millions of files instead of tens of seconds to minutes for Glob, find, rg --files or Get-ChildItem -Recurse. Use whenever you need to locate files or folders by name and don't know the exact path, or the tree is large (home folder, Documents, a drive, a monorepo). Not for searching file contents.
+description: Instant file/folder search by name across the whole PC (or any big folder) using the MyExplorer index — ~20 ms over millions of files instead of tens of seconds to minutes for Glob, find, rg --files or Get-ChildItem -Recurse. Also folder sizes (`mx size`, what's using disk space) far faster than du. Use whenever you need to locate files or folders by name and don't know the exact path, the tree is large (home folder, Documents, a drive, a monorepo), or you need how big folders are. Not for searching file contents.
 ---
 
 # mx — instant file search
@@ -13,8 +13,16 @@ mx -i <path> "<query>"            # only inside <path> (relative ok, e.g. -i .)
 mx -n 50 "<query>"                # more results (default 20)
 mx -l "<query>"                   # + modified date (UTC) and size
 mx -a "<query>"                   # include hidden/system files
+mx size <path> [<path> ...]       # total size + file/folder counts of folders (or files)
+mx size -n 10 <path>              # + the 10 biggest items directly inside, with % of total
 mx status                         # index state / entry count
 ```
+
+**Sizes:** use `mx size` instead of `du`, `Get-ChildItem -Recurse | Measure-Object` or
+summing listings: it reads totals from the index (everything, hidden files included) and only
+touches the disk for `node_modules`/`.git`-style folders. To find what's using space, drill
+down: `mx size -n 10 ~` → `mx size -n 10 ~\AppData` → … Output line: `size  N files, M folders
+path`, then `size  %  name` per item (folders end in `\`).
 
 **Query:** space-separated words must all appear in the file name (any order, case-insensitive). If that yields few hits, words may also match parent folder names, so `"myexplorer shellmenu"` finds `...\MyExplorer\...\shellmenu.rs`. Also:
 - `"exact phrase"` (nested quotes), `src/components` path fragment
