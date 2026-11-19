@@ -276,7 +276,7 @@ fn exists(p: &str) -> bool {
     crate::fs::attributes(p).is_some()
 }
 
-fn unique_path(parent: &str, name: &str, dir: bool) -> String {
+pub(crate) fn unique_path(parent: &str, name: &str, dir: bool) -> String {
     let first = join(parent, name);
     if !exists(&first) {
         return first;

@@ -377,3 +377,20 @@ pub fn thumb_response(uri: &str) -> Response<Vec<u8>> {
         None => png_response(path_icon(&path, size)),
     }
 }
+
+/// PNG bytes of a 32bpp (often premultiplied) menu bitmap; None if unreadable.
+pub(crate) fn hbitmap_png(hbm: HBITMAP) -> Option<Vec<u8>> {
+    // SAFETY: caller passes a live HBITMAP it owns or borrows for the call.
+    let (w, h, mut px) = unsafe { bitmap_bits(hbm)? };
+    if px.chunks_exact(4).all(|p| p[3] == 0) {
+        if px.chunks_exact(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0) {
+            return None;
+        }
+        for p in px.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+    }
+    unpremultiply(&mut px);
+    bgra_to_rgba(&mut px);
+    encode(&Rgba { w, h, px }).map(|a| a.to_vec())
+}

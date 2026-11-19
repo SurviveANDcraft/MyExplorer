@@ -4,19 +4,15 @@ import { fmtSize, isDir } from '../lib/fs';
 import { Icon } from '../lib/icons';
 import { animate, popIn } from '../lib/motion';
 import { setSettings, settings } from '../state/settings';
-import { activeTab, pathAt, selCount, selectedIndices, selectOnly, Tab } from '../state/tabs';
+import { activeTab, pathAt, previewIndex, selCount, selectedIndices, selectOnly, Tab } from '../state/tabs';
 import { quickLook, setQuickLook, viewApi } from '../state/ui';
 import { EmptyState } from './EmptyState';
 import { Preview, PreviewTarget } from './Preview';
 
 function focusedItem(t: Tab): PreviewTarget | null {
-  t.selV();
-  const f = t.focus();
-  let first = -1;
-  if (!(f >= 0 && (t.sel.has(f) || !t.sel.size))) for (const x of t.sel) if (first < 0 || x < first) first = x;
-  const i = first >= 0 ? first : f;
+  const i = previewIndex(t);
+  if (i < 0) return null;
   const m = t.model();
-  if (i < 0 || i >= m.count) return null;
   return { path: pathAt(m, i), name: m.names[i], flags: m.flags[i], modified: m.modified[i] };
 }
 /** Debounced so holding an arrow key doesn't hammer the backend. */
@@ -99,7 +95,7 @@ export function QuickLook() {
             <>
               <div class="ql-head">
                 <span class="ql-name">{it.name}</span>
-                <span class="ql-hint">←/→ to browse · Enter to open</span>
+                <span class="ql-hint">←/→ to browse · Enter to open · Space to close</span>
                 <button class="btn btn-icon btn-sm" aria-label="Close" onClick={() => setQuickLook(false)}><Icon name="close" size={14} /></button>
               </div>
               <Preview item={it} mode="look" />

@@ -96,3 +96,30 @@ export function ensureTypeNames(names: string[], flags: number[]) {
 // ── Clipboard state (dims cut items) ─────────────────────────────────────────
 export const [cutSet, setCutSet] = createSignal<Set<string>>(new Set());
 export const isCut = (path: string) => cutSet().size > 0 && cutSet().has(path.toLowerCase());
+
+// ── Live drive space ─────────────────────────────────────────────────────────
+let driveT = 0, driveBusy = false, driveAgain = false;
+/** Re-read free/total space (coalesced: at most one request in flight, trailing 300 ms). */
+export function refreshDrives(delay = 300) {
+  clearTimeout(driveT);
+  driveT = window.setTimeout(async () => {
+    if (driveBusy) { driveAgain = true; return; }
+    driveBusy = true;
+    try {
+      const d = await invoke('get_drives').catch(() => null);
+      if (d) setDrives((old) => (JSON.stringify(old) === JSON.stringify(d) ? old : d));
+    } finally {
+      driveBusy = false;
+      if (driveAgain) { driveAgain = false; refreshDrives(); }
+    }
+  }, delay);
+}
+let liveStarted = false;
+/** Keep drive numbers current while the app is in use (other apps change disks too). */
+export function startLiveDrives() {
+  if (liveStarted) return;
+  liveStarted = true;
+  window.setInterval(() => { if (document.visibilityState === 'visible') refreshDrives(0); }, 15_000);
+  window.addEventListener('focus', () => refreshDrives(0));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshDrives(0); });
+}

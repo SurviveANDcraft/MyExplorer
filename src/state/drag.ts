@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import { transferTo } from '../commands/actions';
-import { IS_TAURI } from '../ipc/invoke';
+import { invoke, IS_TAURI } from '../ipc/invoke';
 import { isInside, parentOf, samePath } from '../lib/fs';
 import { displayName } from './system';
 import { activate, currentDir } from './tabs';
@@ -50,6 +50,13 @@ export function trackDrag(e: PointerEvent, info: () => DragInfo, onClick?: (ev: 
       if (!data.paths.length) { cleanup(); return; }
       started = true;
       document.documentElement.classList.add('is-dragging');
+    }
+    // Leaving the window hands the drag to Windows, so files can drop into any app.
+    if (IS_TAURI && (ev.clientX <= 0 || ev.clientY <= 0 || ev.clientX >= window.innerWidth - 1 || ev.clientY >= window.innerHeight - 1)) {
+      const paths = data!.paths;
+      cleanup();
+      invoke('drag_out', { paths }).catch((e) => toastError(e, "Couldn't drag these files out"));
+      return;
     }
     const { el, target } = resolveTarget(ev.clientX, ev.clientY, data!.paths);
     highlight(el);

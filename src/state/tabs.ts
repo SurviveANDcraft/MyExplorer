@@ -4,7 +4,8 @@ import type { AppError, DirListing, SearchHit, Sort } from '../ipc/types';
 import { baseName, extOf, isDir, join, parentOf, samePath } from '../lib/fs';
 import { folderView, FolderView, rememberFolderView, settings } from './settings';
 import { displayName, ensureTypeNames, refreshFrecent } from './system';
-import { toastError, viewApi } from './ui';
+import { cancelGrep, runGrep } from './grep';
+import { searchContent, toastError, viewApi } from './ui';
 
 export interface Model {
   dir: string | null;
@@ -18,8 +19,9 @@ export const pathAt = (m: Model, i: number) => (m.paths ? m.paths[i] : join(m.di
 export type Loc = { kind: 'home' } | { kind: 'dir'; path: string };
 interface Hist { loc: Loc; sel: string[]; scroll: number }
 export type Status = 'ready' | 'pending' | 'loading' | 'error';
-export interface SearchState { query: string; everywhere: boolean; kind: string; date: string; size: string }
-export interface SearchMeta { total: number; tookMs: number; partial: boolean; terms: string[]; pending: boolean }
+/** content: search inside files (see state/grep.ts) instead of names. */
+export interface SearchState { query: string; everywhere: boolean; kind: string; date: string; size: string; content?: boolean; caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean }
+export interface SearchMeta { total: number; tookMs: number; partial: boolean; terms: string[]; pending: boolean; scanned?: number }
 
 export interface Tab {
   id: number;
@@ -293,15 +295,17 @@ export function sortBy(t: Tab, key: Sort['key']) {
 // ── Search ───────────────────────────────────────────────────────────────────
 let reqCounter = 0;
 export function setSearchQuery(t: Tab, patch: Partial<SearchState>) {
-  const cur = t.search() ?? { query: '', everywhere: t.loc().kind === 'home', kind: '', date: '', size: '' };
+  const cur = t.search() ?? { query: '', everywhere: t.loc().kind === 'home', kind: '', date: '', size: '', content: searchContent() };
   const next = { ...cur, ...patch };
-  if (!next.query.trim() && !next.kind && !next.date && !next.size) { if (t.search()) exitSearch(t); return; }
+  if (!settings.contentSearch) next.content = false;
+  if (!next.query.trim() && (next.content || (!next.kind && !next.date && !next.size))) { if (t.search()) exitSearch(t); return; }
   if (!t.search()) { t.back.push(snapshot(t)); t.fwd.length = 0; t.setHist((n) => n + 1); t.scroll = 0; t.setSearchSort(null); }
   t.setSearch(next);
   runSearch(t);
 }
 export function exitSearch(t: Tab) {
   if (!t.search()) return;
+  if (t.search()!.content) cancelGrep(t);
   t.reqId = ++reqCounter;
   const h = t.back[t.back.length - 1];
   if (h && h.loc === t.loc()) t.back.pop();
@@ -320,6 +324,8 @@ export async function runSearch(t: Tab) {
   if (!s) return;
   const id = ++reqCounter;
   t.reqId = id;
+  if (s.content) { runGrep(t, id, s); return; }
+  cancelGrep(t);
   const scope = s.everywhere ? null : currentDir(t);
   t.setSearchMeta((m) => ({ total: m?.total ?? 0, tookMs: m?.tookMs ?? 0, partial: m?.partial ?? false, terms: m?.terms ?? [], pending: true }));
   try {
@@ -404,6 +410,15 @@ export function invertSel(t: Tab) {
   setSelection(t, s);
 }
 export const selCount = (t: Tab) => { t.selV(); return t.sel.size; };
+/** The item previews act on: the focused row if it's selected (or nothing is), else the first selected row. -1 if none. */
+export function previewIndex(t: Tab): number {
+  t.selV();
+  const f = t.focus();
+  let first = -1;
+  if (!(f >= 0 && (t.sel.has(f) || !t.sel.size))) for (const x of t.sel) if (first < 0 || x < first) first = x;
+  const i = first >= 0 ? first : f;
+  return i >= 0 && i < t.model().count ? i : -1;
+}
 export const selectedIndices = (t: Tab) => { t.selV(); return [...t.sel].filter((i) => i < t.model().count).sort((a, b) => a - b); };
 export const selectedPaths = (t: Tab) => { const m = t.model(); return selectedIndices(t).map((i) => pathAt(m, i)); };
 export const selectionHasDir = (t: Tab) => { const m = t.model(); return selectedIndices(t).some((i) => isDir(m.flags[i])); };

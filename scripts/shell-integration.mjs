@@ -23,21 +23,35 @@ function reg(...args) {
 }
 const set = (key, name, value) => reg("add", key, ...(name === null ? ["/ve"] : ["/v", name]), "/d", value, "/f");
 
-export function register(exe) {
+const exists = (key) => spawnSync("reg", ["query", key], { encoding: "utf8" }).status === 0;
+const defaultIs = (key, v) => (spawnSync("reg", ["query", key, "/ve"], { encoding: "utf8" }).stdout ?? "").includes(v);
+
+/** What is registered right now (the in-app Settings → Windows page writes the same keys). */
+export function current() {
+  return {
+    folders: defaultIs(`${ROOT}\\Directory\\shell`, VERB),
+    winE: exists(`${WIN_E}\\command`),
+    contextEntry: exists(`${ROOT}\\Directory\\shell\\${VERB}`),
+  };
+}
+
+/** Register `exe`. `parts` defaults to everything; pass current() to only refresh what the user kept on. */
+export function register(exe, parts = { folders: true, winE: true, contextEntry: true }) {
   if (!exe || !existsSync(exe)) throw new Error(`MyExplorer.exe not found${exe ? ` at ${exe}` : ""}. Run \`pnpm release\` first.`);
   const ok = [];
   for (const cls of ["Directory", "Drive"]) {
     const shell = `${ROOT}\\${cls}\\shell`;
-    ok.push(
+    if (parts.folders || parts.contextEntry) ok.push(
       set(`${shell}\\${VERB}`, null, "Open in MyExplorer"),
       set(`${shell}\\${VERB}`, "Icon", `"${exe}",0`),
       set(`${shell}\\${VERB}\\command`, null, `"${exe}" "%1"`),
-      set(shell, null, VERB),
     );
+    if (parts.folders) ok.push(set(shell, null, VERB));
   }
-  ok.push(set(`${WIN_E}\\command`, null, `"${exe}"`), set(`${WIN_E}\\command`, "DelegateExecute", ""));
+  if (parts.winE) ok.push(set(`${WIN_E}\\command`, null, `"${exe}"`), set(`${WIN_E}\\command`, "DelegateExecute", ""));
   if (ok.includes(false)) throw new Error("Some registry writes failed.");
-  console.log(`Folders, drives and Win+E now open in MyExplorer (${exe}).`);
+  const on = Object.entries(parts).filter(([, v]) => v).map(([k]) => k).join(", ") || "nothing";
+  console.log(`Registered ${on} → ${exe}`);
 }
 
 export function unregister() {

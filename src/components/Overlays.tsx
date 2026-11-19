@@ -3,28 +3,38 @@ import { kindOf } from '../lib/fs';
 import { Icon } from '../lib/icons';
 import { popIn } from '../lib/motion';
 import { drag, dropLabel } from '../state/drag';
-import { dismissToast, Toast, toasts } from '../state/ui';
+import { dismissToast, toasts } from '../state/ui';
 import { Glyph } from './FileIcon';
 
-function ToastView(p: { t: Toast }) {
+function ToastView(p: { id: number }) {
+  const cur = () => toasts().find((x) => x.id === p.id);
+  const last = { v: cur()! };
+  const t = () => (last.v = cur() ?? last.v);
   let el!: HTMLDivElement;
   onMount(() => popIn(el, 'bottom center'));
   return (
-    <div ref={el} class={`toast toast-${p.t.kind}`} role={p.t.kind === 'error' ? 'alert' : 'status'}>
-      <span class="toast-icon"><Icon name={p.t.kind === 'error' ? 'alert' : p.t.kind === 'success' ? 'check' : 'info'} /></span>
+    <div ref={el} class={`toast toast-${t().kind}`} role={t().kind === 'error' ? 'alert' : 'status'}>
+      <span class="toast-icon">
+        <Show when={t().kind === 'progress'} fallback={<Icon name={t().kind === 'error' ? 'alert' : t().kind === 'success' ? 'check' : 'info'} />}>
+          <span class="spinner" />
+        </Show>
+      </span>
       <div class="toast-text">
-        <div class="toast-title">{p.t.text}</div>
-        <Show when={p.t.detail}><div class="toast-detail">{p.t.detail}</div></Show>
+        <div class="toast-title">{t().text}</div>
+        <Show when={t().detail}><div class="toast-detail">{t().detail}</div></Show>
+        <Show when={t().kind === 'progress'}>
+          <div class="toast-bar" classList={{ indeterminate: t().progress == null }}><span style={{ width: t().progress == null ? undefined : `${Math.round((t().progress ?? 0) * 100)}%` }} /></div>
+        </Show>
       </div>
-      <Show when={p.t.action}>
-        <button class="btn btn-text btn-sm btn-accent" onClick={() => { p.t.action!.run(); dismissToast(p.t.id); }}>{p.t.action!.label}</button>
+      <Show when={t().action}>
+        <button class="btn btn-text btn-sm btn-accent" onClick={() => { t().action!.run(); dismissToast(t().id); }}>{t().action!.label}</button>
       </Show>
-      <button class="btn btn-icon btn-sm" aria-label="Dismiss" onClick={() => dismissToast(p.t.id)}><Icon name="close" size={12} /></button>
+      <button class="btn btn-icon btn-sm" aria-label="Dismiss" onClick={() => dismissToast(t().id)}><Icon name="close" size={12} /></button>
     </div>
   );
 }
 export function Toasts() {
-  return <div class="toasts" aria-live="polite"><For each={toasts()}>{(t) => <ToastView t={t} />}</For></div>;
+  return <div class="toasts" aria-live="polite"><For each={toasts().map((t) => t.id)}>{(id) => <ToastView id={id} />}</For></div>;
 }
 
 export function DragGhost() {

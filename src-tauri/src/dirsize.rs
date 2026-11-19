@@ -133,3 +133,17 @@ pub fn dir_size(path: &str) -> AppResult<Option<DirSize>> {
 pub fn cancel() {
     GEN.fetch_add(1, Ordering::Relaxed);
 }
+
+/// Forget cached totals that a change at `paths` makes stale: each path, its ancestors and its subtree.
+pub fn invalidate_many(paths: &[String]) {
+    let mut c = CACHE.lock();
+    let Some(m) = c.as_mut() else { return };
+    for p in paths {
+        let changed = key(p);
+        m.retain(|k, _| {
+            let ancestor_or_self = changed == *k || (changed.starts_with(k.as_str()) && changed.as_bytes().get(k.len()) == Some(&b'\\'));
+            let inside = k.starts_with(changed.as_str()) && k.as_bytes().get(changed.len()) == Some(&b'\\');
+            !(ancestor_or_self || inside)
+        });
+    }
+}

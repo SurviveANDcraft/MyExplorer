@@ -11,9 +11,9 @@ import { isCut, typeName } from '../state/system';
 import {
   clearSel, currentDir, isSel, pathAt, selectedPaths, selectOnly, selectRange, setSelection, sortBy, Tab, toggleSel,
 } from '../state/tabs';
-import { openMenu, viewApi } from '../state/ui';
+import { viewApi } from '../state/ui';
 import { FileIcon } from './FileIcon';
-import { backgroundMenu, itemMenu } from './menus';
+import { openContextMenu } from './menus';
 import { SearchStrip } from './SearchStrip';
 import { EmptyState } from './EmptyState';
 
@@ -287,11 +287,11 @@ export function FileView(p: { tab: Tab }) {
     const i = indexOf(e.target);
     if (i >= 0 && settings.clickMode === 'double' && !e.ctrlKey && !e.shiftKey) openIndex(t, i);
   };
-  const showMenu = (x: number, y: number, onItem: boolean) => openMenu({ x, y, items: onItem ? itemMenu(t) : backgroundMenu(t) });
   const onContextMenu = (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('input')) return;
     e.preventDefault();
-    showMenu(e.clientX, e.clientY, indexOf(e.target) >= 0 && t.sel.size > 0);
+    // Shift+right-click adds Windows' extended entries, like Explorer.
+    openContextMenu(t, e.clientX, e.clientY, indexOf(e.target) >= 0 && t.sel.size > 0, e.shiftKey);
   };
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
@@ -321,7 +321,7 @@ export function FileView(p: { tab: Tab }) {
       e.preventDefault();
       const r = scroller.getBoundingClientRect();
       const { x, y } = f >= 0 ? pos(f) : { x: 20, y: 20 };
-      showMenu(r.left + x + 24, r.top + y + l.hd - scroller.scrollTop + l.ih, f >= 0 && t.sel.size > 0);
+      openContextMenu(t, r.left + x + 24, r.top + y + l.hd - scroller.scrollTop + l.ih, f >= 0 && t.sel.size > 0);
       return;
     }
     switch (e.key) {

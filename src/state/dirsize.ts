@@ -38,3 +38,40 @@ export function hoverDir(path: string | null, x = 0, y = 0) {
   showT = window.setTimeout(() => setTip({ path, x, y }), SHOW_MS);
 }
 export const endHover = () => hoverDir(null);
+
+// ── Keeping totals true ──────────────────────────────────────────────────────
+const within = (p: string, root: string) => p === root || p.startsWith(root.endsWith('\\') ? root : root + '\\');
+const stale = new Set<string>();
+let refetchT = 0;
+/** Recompute stale totals one at a time, yielding to hover requests (which cancel ours). */
+function refetchNext() {
+  clearTimeout(refetchT);
+  refetchT = window.setTimeout(() => {
+    if (inflight || cur) { refetchNext(); return; }
+    const path = stale.values().next().value;
+    if (!path) return;
+    stale.delete(path);
+    inflight = true;
+    invoke('dir_size', { path })
+      .then((r) => { if (r) { known.set(path, r); setVer((v) => v + 1); } else stale.add(path); })
+      .catch(() => {})
+      .finally(() => { inflight = false; if (stale.size) refetchNext(); });
+  }, 250);
+}
+/** Something changed at `paths`: drop totals for them, their parents and their contents, then recompute the ones on screen. */
+export function invalidateSizes(paths: (string | null | undefined)[]) {
+  const ps = paths.filter((p): p is string => !!p).map(k);
+  if (!ps.length) return;
+  let hit = false;
+  for (const key of [...known.keys()]) {
+    if (ps.some((p) => within(p, key) || within(key, p))) {
+      known.delete(key);
+      failed.delete(key);
+      // Recompute it so the number stays on screen (deleted folders just drop out).
+      stale.add(key);
+      hit = true;
+    }
+  }
+  invoke('invalidate_dir_sizes', { paths: paths.filter((p): p is string => !!p) }).catch(() => {});
+  if (hit) { setVer((v) => v + 1); refetchNext(); }
+}

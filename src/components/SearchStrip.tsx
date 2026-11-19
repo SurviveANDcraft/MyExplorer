@@ -1,9 +1,10 @@
 import { For, Show } from 'solid-js';
 import { fmtCount } from '../lib/fs';
 import { Icon, IconName } from '../lib/icons';
+import { settings } from '../state/settings';
 import { displayName } from '../state/system';
 import { currentDir, SearchState, setSearchQuery, Tab } from '../state/tabs';
-import { MenuItem, openMenuAt } from '../state/ui';
+import { MenuItem, openMenuAt, setSearchContent } from '../state/ui';
 
 type ChipKey = 'kind' | 'date' | 'size';
 const CHIPS: { key: ChipKey; label: string; icon: IconName; options: [string, string][] }[] = [
@@ -21,8 +22,20 @@ export function SearchStrip(p: { tab: Tab }) {
     if (cur) items.push({ sep: true }, { label: 'Clear', icon: 'close', run: () => setSearchQuery(p.tab, { [c.key]: '' } as Partial<SearchState>) });
     openMenuAt(el, items);
   };
+  const content = () => !!s().content;
+  const opt = (key: 'caseSensitive' | 'wholeWord' | 'regex', icon: IconName, label: string) => (
+    <button class="chip chip-icon" classList={{ on: !!s()[key] }} data-tip={label} aria-label={label} aria-pressed={!!s()[key]}
+      onClick={() => setSearchQuery(p.tab, { [key]: !s()[key] } as Partial<SearchState>)}><Icon name={icon} size={15} /></button>
+  );
   return (
     <div class="searchstrip">
+      <Show when={settings.contentSearch}>
+      <div class="seg seg-sm" role="radiogroup" aria-label="Search for">
+        <button role="radio" aria-checked={!content()} classList={{ on: !content() }} onClick={() => { setSearchContent(false); setSearchQuery(p.tab, { content: false }); }}>Names</button>
+        <button role="radio" aria-checked={content()} classList={{ on: content() }} onClick={() => { setSearchContent(true); setSearchQuery(p.tab, { content: true }); }}>In files <span class="beta">Beta</span></button>
+      </div>
+      <span class="ss-sep" />
+      </Show>
       <div class="ss-scope">
         <button class="chip" classList={{ on: !s().everywhere }} disabled={!currentDir(p.tab)} onClick={() => setSearchQuery(p.tab, { everywhere: false })}>
           <Icon name="folder" size={14} />{currentDir(p.tab) ? displayName(currentDir(p.tab)!) : 'This folder'}
@@ -32,7 +45,12 @@ export function SearchStrip(p: { tab: Tab }) {
         </button>
       </div>
       <span class="ss-sep" />
-      <For each={CHIPS}>{(c) => {
+      <Show when={content()}>
+        {opt('caseSensitive', 'caseSensitive', 'Match case')}
+        {opt('wholeWord', 'wholeWord', 'Whole word')}
+        {opt('regex', 'regex', 'Regular expression')}
+      </Show>
+      <For each={content() ? [] : CHIPS}>{(c) => {
         const val = () => s()[c.key];
         return (
           <button class="chip" classList={{ on: !!val() }} onClick={(e) => choose(e.currentTarget, c)}>
@@ -44,7 +62,8 @@ export function SearchStrip(p: { tab: Tab }) {
         <Show when={meta()}>
           {(m) => <>
             <Show when={m().pending}><span class="dot-pulse" /></Show>
-            {fmtCount(m().total)} result{m().total === 1 ? '' : 's'}
+            {fmtCount(m().total)} {content() ? `file${m().total === 1 ? '' : 's'}` : `result${m().total === 1 ? '' : 's'}`}
+            <Show when={content() && m().scanned}><span class="ss-dim"> · {fmtCount(m().scanned!)} searched</span></Show>
             <span class="ss-dim"> · {m().tookMs} ms</span>
             <Show when={m().partial}><span class="ss-warn"> · index building, results may be incomplete</span></Show>
           </>}

@@ -1,4 +1,5 @@
 import { Flag } from '../ipc/types';
+import { langFor } from './langs';
 
 export const isDir = (f: number) => (f & Flag.Dir) !== 0;
 export const isCloud = (f: number) => (f & Flag.Cloud) !== 0;
@@ -90,5 +91,7 @@ reg('link', 'lnk url');
 export const kindOf = (name: string, flags: number): Kind => (isDir(flags) ? 'folder' : KIND[extOf(name)] ?? 'file');
 export const previewKind = (name: string, flags: number) => {
   const k = kindOf(name, flags);
+  if (k === 'folder' || k === 'image') return k;
+  if (langFor(name)) return 'code';
   return k === 'text' || k === 'code' ? 'text' : k;
 };

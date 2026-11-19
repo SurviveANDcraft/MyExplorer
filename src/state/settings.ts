@@ -26,6 +26,9 @@ export interface Settings {
   sidebarCollapsed: boolean;
   previewPane: boolean;
   previewWidth: number;
+  grepPreviewWidth: number;
+  /** Beta: "Search in files" (content search). Off by default. */
+  contentSearch: boolean;
   columns: Record<ColumnId, number>;
 }
 
@@ -48,6 +51,8 @@ export const DEFAULTS: Settings = {
   sidebarCollapsed: false,
   previewPane: false,
   previewWidth: 320,
+  grepPreviewWidth: 560,
+  contentSearch: false,
   columns: { name: 340, modified: 172, type: 168, size: 96, folder: 300 },
 };
 
