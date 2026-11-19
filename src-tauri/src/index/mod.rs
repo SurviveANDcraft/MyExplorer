@@ -476,8 +476,13 @@ fn hits_from(ix: &Index, top: &[(f32, u32)], offset: usize, limit: usize) -> Vec
 }
 
 pub fn search(req_id: f64, query: &str, opts: &SearchOptions) -> SearchResult {
+    search_parsed(req_id, &query::parse(query), opts, Duration::from_millis(600))
+}
+
+/// Search with an already-parsed query. `live_wait` bounds how long a live walk (scope not
+/// in the index) may run before partial results are returned.
+pub fn search_parsed(req_id: f64, q: &query::Query, opts: &SearchOptions, live_wait: Duration) -> SearchResult {
     let t0 = Instant::now();
-    let q = query::parse(query);
     let terms = q.highlight_terms();
     let limit = opts.limit.min(5000);
     let k = opts.offset.saturating_add(limit);
@@ -505,7 +510,7 @@ pub fn search(req_id: f64, query: &str, opts: &SearchOptions) -> SearchResult {
             let profile = ix.resolve(&crate::fs::HOME);
             let ctx = search::Ctx {
                 idx: &ix,
-                q: &q,
+                q,
                 scope: scope_id,
                 profile,
                 frec: &frec,
@@ -529,7 +534,7 @@ pub fn search(req_id: f64, query: &str, opts: &SearchOptions) -> SearchResult {
             let profile = ix.resolve(&crate::fs::HOME);
             let ctx = search::Ctx {
                 idx: &ix,
-                q: &q,
+                q,
                 scope: scope_id,
                 profile,
                 frec: &frec,
@@ -546,14 +551,14 @@ pub fn search(req_id: f64, query: &str, opts: &SearchOptions) -> SearchResult {
     // Index not ready (or scope outside the index): live walk of the scope.
     let scope = scope.unwrap_or_else(|| crate::fs::HOME.clone());
     let (idx, done, started) = live_index(&scope);
-    while !done.load(Ordering::Acquire) && started.elapsed() < Duration::from_millis(600) {
+    while !done.load(Ordering::Acquire) && started.elapsed() < live_wait {
         std::thread::sleep(Duration::from_millis(10));
     }
     let ix = idx.lock();
     let profile = ix.resolve(&crate::fs::HOME);
     let ctx = search::Ctx {
         idx: &ix,
-        q: &q,
+        q,
         scope: None,
         profile,
         frec: &frec,
@@ -563,10 +568,53 @@ pub fn search(req_id: f64, query: &str, opts: &SearchOptions) -> SearchResult {
     };
     let (top, total) = search::run(&ctx, k);
     let hits = hits_from(&ix, &top, opts.offset, limit);
-    mk(hits, total, true)
+    mk(hits, total, !done.load(Ordering::Acquire))
+}
+
+/// Block until searches can be answered from an index (loaded cache, or a first build in
+/// progress) rather than a live walk. False on timeout.
+pub fn wait_searchable(timeout: Duration) -> bool {
+    let t = Instant::now();
+    loop {
+        if ENGINE.has_data.load(Ordering::Acquire) || BUILDING.lock().is_some() {
+            return true;
+        }
+        if t.elapsed() >= timeout {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Warm up the rayon pool so the first keystroke is fast.
 pub fn warmup() {
     rayon::spawn(|| {});
+}
+
+// ── content-search support ──────────────────────────────────────────────────
+
+pub(crate) fn frecency() -> Arc<HashMap<u64, f32>> {
+    frec_map()
+}
+
+/// Indexed files whose (lowercase) name passes `accept`, as (path, size, modified).
+/// None while the first index build hasn't finished.
+pub(crate) fn file_candidates(accept: impl Fn(&[u8], u64) -> bool, include_hidden: bool) -> Option<Vec<(String, u64, i64)>> {
+    if !ENGINE.has_data.load(Ordering::Acquire) {
+        return None;
+    }
+    let ix = ENGINE.idx.read();
+    let skip = F_DIR | F_DELETED | F_CLOUD | if include_hidden { 0 } else { F_HIDDEN | F_SYSTEM };
+    let mut out = Vec::new();
+    for i in 0..ix.len() as u32 {
+        let f = ix.flags[i as usize];
+        if f & skip != 0 || ix.is_root(i) {
+            continue;
+        }
+        let size = ix.size[i as usize];
+        if accept(ix.lower(i), size) {
+            out.push((ix.path(i), size, ix.modified[i as usize]));
+        }
+    }
+    Some(out)
 }
