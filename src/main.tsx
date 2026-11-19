@@ -12,6 +12,7 @@ import type { LaunchReq } from './ipc/types';
 import { initSettings, settings } from './state/settings';
 import { loadSystem } from './state/system';
 import { expectSelection, newTab } from './state/tabs';
+import { initUpdater } from './state/updater';
 
 /** Open a launch request (folder double-clicked in Windows, Win+E, …) as a tab. */
 function openRequest(r: LaunchReq) {
@@ -36,6 +37,8 @@ async function boot() {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       getCurrentWindow().show().catch(() => {});
     }));
+    // Fire-and-forget: a failed or slow check must never delay startup.
+    initUpdater();
   }
 }
 boot();

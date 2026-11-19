@@ -198,3 +198,130 @@ pub async fn take_launch() -> AppResult<Option<crate::launch::LaunchReq>> {
 pub async fn save_settings(json: String) -> AppResult<()> {
     blocking(move || predict::save_settings(&json)).await
 }
+
+// ── native shell UI ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn shell_menu_open(paths: Vec<String>, dir: Option<String>, extended: bool) -> AppResult<crate::shellmenu::ShellMenu> {
+    crate::shellmenu::menu_open(paths, dir, extended).await
+}
+
+#[tauri::command]
+pub async fn shell_menu_invoke(session: u32, id: u32, x: i32, y: i32) -> AppResult<()> {
+    crate::shellmenu::menu_invoke(session, id, x, y).await
+}
+
+#[tauri::command]
+pub async fn shell_menu_close(session: u32) -> AppResult<()> {
+    crate::shellmenu::menu_close(session);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn drag_out(paths: Vec<String>) -> AppResult<String> {
+    crate::shellmenu::drag_out(paths).await
+}
+
+// ── archives ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn compress(id: u32, paths: Vec<String>) -> AppResult<String> {
+    blocking(move || crate::archive::compress(id, paths)).await
+}
+
+#[tauri::command]
+pub async fn extract(id: u32, path: String) -> AppResult<String> {
+    blocking(move || crate::archive::extract(id, path)).await
+}
+
+#[tauri::command]
+pub async fn cancel_archive(id: u32) -> AppResult<()> {
+    crate::archive::cancel(id);
+    Ok(())
+}
+
+// ── content search ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn grep(req_id: f64, query: String, options: crate::grep::GrepOptions) -> AppResult<()> {
+    crate::grep::start(req_id, query, options)
+}
+
+#[tauri::command]
+pub async fn cancel_grep() -> AppResult<()> {
+    crate::grep::cancel();
+    Ok(())
+}
+
+// ── Windows integration ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn integration_status() -> AppResult<crate::integration::IntegrationStatus> {
+    blocking(|| Ok(crate::integration::status())).await
+}
+
+#[tauri::command]
+pub async fn set_integration(state: crate::integration::Integration) -> AppResult<crate::integration::IntegrationStatus> {
+    blocking(move || crate::integration::apply(state)).await
+}
+
+// ── Updates & about ─────────────────────────────────────────────────────────
+
+/// Before the updater runs the installer (which ends this process): persist the index and
+/// history, and retire a headless mx daemon so no copy of the exe stays locked.
+#[tauri::command]
+pub async fn prepare_update() -> AppResult<()> {
+    blocking(|| {
+        crate::predict::flush();
+        crate::index::save_now();
+        crate::agent::stop_daemon();
+        Ok(())
+    })
+    .await
+}
+
+/// The updater relaunches the app while this process is still alive; without this the
+/// single-instance guard would forward the new process's args here and let it exit.
+#[tauri::command]
+pub fn release_single_instance_lock(app: tauri::AppHandle) {
+    tauri_plugin_single_instance::destroy(&app);
+}
+
+/// Open the bundled third-party license notices.
+#[tauri::command]
+pub async fn open_notices() -> AppResult<()> {
+    let p = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("THIRD-PARTY-NOTICES.txt")))
+        .filter(|p| p.is_file())
+        .ok_or_else(|| AppError::io("License notices are missing. Reinstall MyExplorer."))?;
+    shellops::open(&p.to_string_lossy()).await
+}
+
+// ── AI agents (mx) ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn agents_status() -> AppResult<crate::agent_setup::AgentsStatus> {
+    blocking(|| Ok(crate::agent_setup::status())).await
+}
+
+#[tauri::command]
+pub async fn set_agent(id: String, on: bool) -> AppResult<crate::agent_setup::AgentsStatus> {
+    blocking(move || crate::agent_setup::set(&id, on)).await
+}
+
+#[tauri::command]
+pub async fn agents_prompt() -> AppResult<String> {
+    blocking(|| Ok(crate::agent_setup::prompt())).await
+}
+
+#[tauri::command]
+pub async fn hotkey_free(mods: u32, vk: u32) -> AppResult<bool> {
+    blocking(move || Ok(crate::integration::hotkey_free(mods, vk))).await
+}
+
+#[tauri::command]
+pub async fn invalidate_dir_sizes(paths: Vec<String>) -> AppResult<()> {
+    crate::dirsize::invalidate_many(&paths);
+    Ok(())
+}

@@ -28,6 +28,7 @@ export const installDir = () => join(process.env.LOCALAPPDATA ?? "", "MyExplorer
 export function findInstalledExe() {
   const dir = installDir();
   if (!existsSync(dir)) return null;
-  const exe = readdirSync(dir).find((f) => f.toLowerCase().endsWith(".exe") && !/^uninstall/i.test(f));
+  const exes = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".exe") && !/^(uninstall|mx\.exe$)/i.test(f));
+  const exe = exes.find((f) => /^myexplorer/i.test(f)) ?? exes[0];
   return exe ? join(dir, exe) : null;
 }

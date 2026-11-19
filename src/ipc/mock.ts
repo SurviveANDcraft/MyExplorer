@@ -305,6 +305,19 @@ export async function handle(cmd: string, a: any): Promise<unknown> {
     }
     case 'load_settings': try { return localStorage.getItem('myexplorer.settings'); } catch { return null; }
     case 'save_settings': try { localStorage.setItem('myexplorer.settings', a.json); } catch { /* ignore */ } return null;
+    case 'shell_menu_open': return { session: 0, items: [] };
+    case 'shell_menu_invoke': case 'shell_menu_close': return null;
+    case 'drag_out': return 'none';
+    case 'cancel_archive': case 'cancel_grep': return null;
+    case 'compress': case 'extract': return fail('unsupported', 'Archives need the desktop app.');
+    case 'grep': return fail('unsupported', 'Search in files needs the desktop app.');
+    case 'integration_status': return { folders: false, winE: false, contextEntry: false, exe: '', stale: false, devBuild: true };
+    case 'set_integration': return { ...a.state, exe: '', stale: false, devBuild: true };
+    case 'hotkey_free': return true;
+    case 'agents_status': case 'set_agent': return { mxPath: null, onPath: false, agents: [], devBuild: true };
+    case 'agents_prompt': return '';
+    case 'prepare_update': case 'release_single_instance_lock': case 'open_notices': return null;
+    case 'invalidate_dir_sizes': return null;
   }
   return fail('unsupported', `Mock: unknown command ${cmd}`);
 }

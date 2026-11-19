@@ -2,13 +2,18 @@ import { onCleanup, onMount, Show } from 'solid-js';
 import { handleGlobalKey, runCommand } from './commands/registry';
 import { IS_TAURI, listen } from './ipc/invoke';
 import { samePath } from './lib/fs';
+import { diskChanged } from './commands/actions';
 import { initExternalDrop } from './state/drag';
+import { startLiveDrives } from './state/system';
 import { settings } from './state/settings';
-import { activeTab, refresh, tabs } from './state/tabs';
+import { activeTab, currentDir, refresh, tabs } from './state/tabs';
+import { prewarmShellMenu } from './components/shellMenu';
 import { paletteOpen, picker, quickLook, settingsOpen } from './state/ui';
 import { CommandBar } from './components/CommandBar';
 import { ContextMenu } from './components/ContextMenu';
 import { FileView } from './components/FileView';
+import { GrepView } from './components/GrepView';
+import { SearchStrip } from './components/SearchStrip';
 import { Home } from './components/Home';
 import { NavRow } from './components/NavRow';
 import { DragGhost, Toasts, Tooltip } from './components/Overlays';
@@ -16,6 +21,8 @@ import { Palette } from './components/Palette';
 import { Picker } from './components/Picker';
 import { PreviewPane, QuickLook } from './components/PreviewPane';
 import { SettingsDialog } from './components/Settings';
+import { UpdateDialog } from './components/UpdateDialog';
+import { updateDialogOpen } from './state/updater';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TitleBar } from './components/TitleBar';
@@ -43,6 +50,7 @@ export default function App() {
 
     const timers = new Map<number, number>();
     listen('fs:changed', ({ path }) => {
+      diskChanged(path);
       for (const t of tabs()) {
         if (!samePath(t.watched, path) || t.search()) continue;
         clearTimeout(timers.get(t.id));
@@ -50,6 +58,8 @@ export default function App() {
       }
     }).then((un) => (unFs = un), () => {});
     initExternalDrop();
+    startLiveDrives();
+    window.setTimeout(() => prewarmShellMenu(currentDir() ?? 'C:\\'), 2500);
   });
 
   const showHome = () => activeTab()?.loc().kind === 'home' && !activeTab().search();
@@ -64,10 +74,16 @@ export default function App() {
           <div class="surface-main">
             <div class="viewwrap">
               <Show when={activeTab()} keyed>
-                {(t) => <Show when={!showHome()} fallback={<Home />}><FileView tab={t} /></Show>}
+                {(t) => (
+                  <Show when={!showHome()} fallback={<Home />}>
+                    <Show when={t.search()?.content} fallback={<FileView tab={t} />}>
+                      <div class="grep-wrap"><SearchStrip tab={t} /><GrepView tab={t} /></div>
+                    </Show>
+                  </Show>
+                )}
               </Show>
             </div>
-            <Show when={settings.previewPane}><PreviewPane /></Show>
+            <Show when={settings.previewPane && !activeTab()?.search()?.content}><PreviewPane /></Show>
           </div>
           <StatusBar />
         </main>
@@ -76,6 +92,7 @@ export default function App() {
       <Show when={paletteOpen()}><Palette /></Show>
       <Show when={picker()}><Picker /></Show>
       <Show when={settingsOpen()}><SettingsDialog /></Show>
+      <Show when={updateDialogOpen()}><UpdateDialog /></Show>
       <ContextMenu />
       <Tooltip />
       <DragGhost />

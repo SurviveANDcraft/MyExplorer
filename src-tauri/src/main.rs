@@ -1,13 +1,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
+mod agent_setup;
+mod archive;
 mod commands;
 mod dirsize;
 mod error;
 mod fs;
+mod grep;
 mod images;
 mod index;
+mod integration;
 mod launch;
 mod predict;
+mod shellmenu;
 mod shellops;
 mod sta;
 mod types;
@@ -22,11 +28,21 @@ fn main() {
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", util::data_dir().join("webview"));
     }
     let argv: Vec<String> = std::env::args().collect();
+    // Headless search server for the `mx` CLI (no window, no single-instance handoff).
+    if argv.iter().skip(1).any(|a| a == "--mx-daemon") {
+        agent::run_daemon();
+    }
+    // Scripted agent setup (same as Settings → AI agents); the uninstaller uses --agents-uninstall.
+    if let Some(code) = agent_setup::cli(&argv) {
+        std::process::exit(code);
+    }
     let cwd = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
     launch::set_initial(launch::parse(&argv, &cwd));
     let app = tauri::Builder::default()
         // Must be the first plugin: a second launch hands its args over and exits immediately.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| launch::on_second_instance(app, argv, cwd)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .register_asynchronous_uri_scheme_protocol("icon", |_ctx, req, responder| {
             let uri = req.uri().to_string();
             sta::SHELL.spawn(move || responder.respond(images::icon_response(&uri)));
@@ -69,6 +85,25 @@ fn main() {
             commands::load_settings,
             commands::save_settings,
             commands::take_launch,
+            commands::shell_menu_open,
+            commands::shell_menu_invoke,
+            commands::shell_menu_close,
+            commands::drag_out,
+            commands::compress,
+            commands::extract,
+            commands::cancel_archive,
+            commands::grep,
+            commands::cancel_grep,
+            commands::integration_status,
+            commands::set_integration,
+            commands::hotkey_free,
+            commands::agents_status,
+            commands::set_agent,
+            commands::agents_prompt,
+            commands::prepare_update,
+            commands::release_single_instance_lock,
+            commands::open_notices,
+            commands::invalidate_dir_sizes,
         ])
         .setup(|app| {
             let _ = util::APP.set(app.handle().clone());
@@ -86,6 +121,7 @@ fn main() {
             }
             index::warmup();
             index::start();
+            agent::start_gui();
             std::thread::spawn(|| {
                 let _ = &*fs::HOME;
                 predict::version();

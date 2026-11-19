@@ -1,14 +1,21 @@
-import { invoke } from '../ipc/invoke';
-import { baseName, isDir, isInside, parentOf, samePath } from '../lib/fs';
+import { invoke, listen } from '../ipc/invoke';
+import { baseName, extOf, isDir, isInside, parentOf, samePath } from '../lib/fs';
 import { setSettings, settings } from '../state/settings';
-import { displayName, refreshFrecent, setCutSet } from '../state/system';
+import { invalidateSizes } from '../state/dirsize';
+import { displayName, refreshDrives, refreshFrecent, setCutSet } from '../state/system';
 import {
   activeTab, currentDir, expectSelection, navigate, newTab, openDir, pathAt, refresh, selectedIndices, selectedPaths, Tab, tabs,
 } from '../state/tabs';
-import { attempt, setPicker, toast, toastError } from '../state/ui';
+import { attempt, setPicker, toast, toastError, updateToast } from '../state/ui';
 
 const plural = (n: number, w = 'item') => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** Disk contents changed under these folders: sizes and free space must follow. */
+export function diskChanged(...paths: (string | null | undefined)[]) {
+  invalidateSizes(paths);
+  refreshDrives();
+}
 const refreshDirs = (...dirs: (string | null)[]) => {
+  diskChanged(...dirs);
   for (const t of tabs()) {
     const d = currentDir(t);
     if (t.search() || (d && dirs.some((x) => samePath(x, d)))) refresh(t);
@@ -93,7 +100,8 @@ export async function deleteSelection(permanent: boolean) {
   t.pendingFocusIndex = idx[0];
   try {
     await invoke('delete', { paths, permanent });
-  } catch (e) { t.pendingFocusIndex = -1; toastError(e, `Couldn't delete ${plural(paths.length)}`); return; }
+  } catch (e) { t.pendingFocusIndex = -1; toastError(e, `Couldn't delete ${plural(paths.length)}`); diskChanged(...paths); return; }
+  diskChanged(...paths, ...paths.map(parentOf));
   toast({
     kind: 'success',
     text: permanent ? `Permanently deleted ${plural(paths.length)}` : `Moved ${plural(paths.length)} to the Recycle Bin`,
@@ -204,3 +212,54 @@ export const newTabHere = () => {
   const startup = settings.startup;
   newTab(startup && startup !== 'home' ? { kind: 'dir', path: startup } : { kind: 'home' }, { after: activeTab() });
 };
+
+// ── Archives ─────────────────────────────────────────────────────────────────
+export const ARCHIVE_EXTS = new Set(['zip', '7z', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz', 'zst', 'tzst', 'lz4', 'cab', 'iso']);
+export const isArchive = (name: string) => ARCHIVE_EXTS.has(extOf(name));
+let archiveSeq = 0;
+const progressListeners = new Map<number, (f: number | null) => void>();
+let progressHooked = false;
+function hookProgress() {
+  if (progressHooked) return;
+  progressHooked = true;
+  listen('archive:progress', (p) => progressListeners.get(p.id)?.(p.total ? p.done / p.total : null)).catch(() => {});
+}
+async function runArchive(verb: 'Compressing' | 'Extracting', subject: string, call: (id: number) => Promise<string>, t: Tab) {
+  hookProgress();
+  const id = ++archiveSeq;
+  const tid = toast({ kind: 'progress', text: `${verb} ${subject}…`, progress: null, action: { label: 'Cancel', run: () => { invoke('cancel_archive', { id }).catch(() => {}); } } });
+  progressListeners.set(id, (f) => updateToast(tid, { progress: f }));
+  try {
+    const out = await call(id);
+    const dir = parentOf(out);
+    if (samePath(currentDir(t), dir)) expectSelection(t, [baseName(out)]);
+    refreshDirs(dir);
+    updateToast(tid, { kind: 'success', text: `${verb === 'Compressing' ? 'Created' : 'Extracted to'} ${baseName(out)}`, progress: undefined, action: undefined }, 3500);
+  } catch (e) {
+    const err = e as { code?: string; message?: string };
+    if (err.code === 'cancelled') updateToast(tid, { kind: 'info', text: 'Cancelled', progress: undefined, action: undefined }, 2500);
+    else updateToast(tid, { kind: 'error', text: `${verb} failed`, detail: err.message, progress: undefined, action: undefined }, 7000);
+  } finally { progressListeners.delete(id); }
+}
+export function compressSelection() {
+  const t = activeTab();
+  const paths = selectedPaths(t);
+  if (!paths.length) return;
+  runArchive('Compressing', paths.length === 1 ? baseName(paths[0]) : plural(paths.length), (id) => invoke('compress', { id, paths }), t);
+}
+export function extractSelection() {
+  const t = activeTab();
+  const archives = selectedPaths(t).filter((p) => isArchive(baseName(p)));
+  for (const path of archives.slice(0, 8)) runArchive('Extracting', baseName(path), (id) => invoke('extract', { id, path }), t);
+}
+
+/** Go to the file's folder with it selected. */
+/** Go to the folder that contains the (first) selected item, with it selected. */
+export function openLocation() {
+  const p = selectedPaths(activeTab())[0];
+  if (p) revealPath(p);
+}
+export function revealPath(path: string, t: Tab = activeTab()) {
+  const dir = parentOf(path);
+  if (dir) navigate(t, { kind: 'dir', path: dir }, { sel: [baseName(path)] });
+}

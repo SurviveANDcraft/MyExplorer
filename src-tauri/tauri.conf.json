@@ -40,10 +40,19 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "publisher": "MyExplorer",
+    "copyright": "Copyright (c) 2026 SurviveANDcraft. MIT License.",
+    "license": "MIT",
+    "homepage": "https://github.com/SurviveANDcraft/MyExplorer",
     "shortDescription": "Fast file explorer for Windows",
+    "resources": {
+      "bin/mx.exe": "mx.exe",
+      "../LICENSE": "LICENSE.txt",
+      "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    },
     "windows": {
-      "nsis": { "installMode": "currentUser" }
+      "nsis": { "installMode": "currentUser", "installerHooks": "windows/hooks.nsh" }
     },
     "icon": [
       "icons/32x32.png",
@@ -52,5 +61,12 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://github.com/SurviveANDcraft/MyExplorer/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDMkZBNjFGODhGOUYwMUUKUldRZThQbUlINll2N0tTamJ6TmRsRTdtTDlvUnZ4Q2RZRWpuQkZLTHlVOWZQNVZtbzJSbXFMQnIK",
+      "windows": { "installMode": "passive" }
+    }
   }
 }

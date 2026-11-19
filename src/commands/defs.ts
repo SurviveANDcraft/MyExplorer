@@ -1,9 +1,11 @@
 import { IS_TAURI } from '../ipc/invoke';
+import { baseName, isDir } from '../lib/fs';
 import { setSettings, settings } from '../state/settings';
 import {
-  activate, activeTab, clearSel, closeTab, currentDir, goBack, goForward, goUp, invertSel, refresh, selCount, selectAll, setSearchQuery, tabs, updateView,
+  activate, activeTab, clearSel, closeTab, currentDir, goBack, goForward, goUp, invertSel, previewIndex, refresh, selCount, selectAll, selectedPaths, setSearchQuery, tabs, updateView,
 } from '../state/tabs';
-import { focusSearch, quickLook, setSearchEverywhere, setPaletteOpen, setPathEditing, setQuickLook, setSettingsOpen, viewApi } from '../state/ui';
+import { focusSearch, quickLook, setSearchContent, setSearchEverywhere, setPaletteOpen, setPathEditing, setQuickLook, setSettingsOpen, viewApi } from '../state/ui';
+import { openContextMenuForFocus } from '../components/menus';
 import * as A from './actions';
 import { Command, register } from './registry';
 
@@ -13,6 +15,14 @@ const cycleTab = (d: number) => {
   const l = tabs(); const i = l.indexOf(activeTab());
   activate(l[(i + d + l.length) % l.length].id);
 };
+
+/** Space: folders have nothing to preview, so step into them; files toggle Quick Look. */
+function spaceAction() {
+  const t = activeTab();
+  const i = previewIndex(t);
+  if (i >= 0 && isDir(t.model().flags[i])) { setQuickLook(false); A.openIndex(t, i); return; }
+  setQuickLook(!quickLook());
+}
 
 export function registerCommands() {
   const C: Command[] = [
@@ -26,8 +36,9 @@ export function registerCommands() {
     // Open
     { id: 'item.open', label: 'Open', category: 'File', keys: ['Enter'], icon: 'external', run: () => A.openSelection(), enabled: () => hasSel() || activeTab().focus() >= 0 },
     { id: 'item.openNewTab', label: 'Open in new tab', category: 'File', keys: ['Ctrl+Enter'], icon: 'tab', run: () => A.openSelection(true), enabled: hasSel },
+    { id: 'item.openLocation', label: 'Open file location', category: 'File', keys: ['Ctrl+Shift+O'], icon: 'folder', run: A.openLocation, enabled: hasSel },
     { id: 'item.openWith', label: 'Open with…', category: 'File', icon: 'external', run: A.openWith, enabled: hasSel },
-    { id: 'item.quickLook', label: 'Quick Look', category: 'View', keys: ['Space'], icon: 'eye', run: () => setQuickLook(!quickLook()), enabled: () => quickLook() || hasSel() || activeTab().focus() >= 0 },
+    { id: 'item.quickLook', label: 'Quick Look', category: 'View', keys: ['Space'], icon: 'eye', run: spaceAction, enabled: () => quickLook() || hasSel() || activeTab().focus() >= 0 },
     { id: 'item.properties', label: 'Properties', category: 'File', keys: ['Alt+Enter'], icon: 'info', run: A.properties },
     { id: 'shell.terminal', label: 'Open in Terminal', category: 'File', keys: ['Ctrl+`'], icon: 'terminal', inInput: true, run: A.terminalHere, enabled: () => !!currentDir() || hasSel() },
     // Edit
@@ -47,10 +58,14 @@ export function registerCommands() {
     { id: 'file.newText', label: 'New text document', category: 'File', icon: 'fileText', run: () => A.createNew('text'), enabled: inDir },
     { id: 'file.moveTo', label: 'Move to…', category: 'File', keys: ['Ctrl+Shift+M'], icon: 'folderMove', run: () => A.openPicker('move'), enabled: hasSel },
     { id: 'file.copyTo', label: 'Copy to…', category: 'File', keys: ['Ctrl+Alt+Shift+C'], icon: 'folderCopy', run: () => A.openPicker('copy'), enabled: hasSel },
+    { id: 'file.compress', label: 'Compress to ZIP', category: 'File', icon: 'archive', run: A.compressSelection, enabled: hasSel },
+    { id: 'file.extract', label: 'Extract here', category: 'File', icon: 'unarchive', run: A.extractSelection, enabled: () => selectedPaths(activeTab()).some((p) => A.isArchive(baseName(p))) },
+    { id: 'shell.contextMenu', label: 'Open context menu', category: 'File', keys: ['Shift+F10', 'ContextMenu'], icon: 'more', run: () => openContextMenuForFocus(activeTab()), enabled: () => hasSel() || !!currentDir() },
     { id: 'file.pin', label: 'Pin / unpin in sidebar', category: 'File', icon: 'pin', run: () => A.togglePin(), enabled: () => !!currentDir() || hasSel() },
     // Search
     { id: 'search.focus', label: 'Search this folder', category: 'Search', keys: ['Ctrl+F', 'Ctrl+E', 'F3'], icon: 'search', inInput: true, run: () => { const t = activeTab(); setSearchEverywhere(false); if (t.search()?.everywhere && currentDir(t)) setSearchQuery(t, { everywhere: false }); focusSearch(); } },
     { id: 'search.everywhere', label: 'Search everywhere', category: 'Search', keys: ['Ctrl+Shift+F'], icon: 'globe', inInput: true, run: () => { const t = activeTab(); const v = t.search() ? !t.search()!.everywhere || !currentDir(t) : true; setSearchEverywhere(v); if (t.search()) setSearchQuery(t, { everywhere: v }); focusSearch(); } },
+    { id: 'search.contents', label: 'Search in files', category: 'Search', keys: ['Ctrl+Shift+G'], icon: 'fileSearch', inInput: true, enabled: () => settings.contentSearch, run: () => { const t = activeTab(); const v = !t.search()?.content; setSearchContent(v); if (t.search()) setSearchQuery(t, { content: v }); focusSearch(); } },
     { id: 'palette.open', label: 'Command palette', category: 'App', keys: ['Ctrl+K', 'Ctrl+Shift+P'], icon: 'bolt', inInput: true, run: () => setPaletteOpen(true), hidden: true },
     // View
     { id: 'view.details', label: 'Details view', category: 'View', keys: ['Ctrl+Shift+1'], icon: 'details', run: () => updateView(activeTab(), { view: 'details' }) },
