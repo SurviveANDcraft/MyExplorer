@@ -41,6 +41,7 @@ function springTab(x: number, y: number) {
 /** Starts tracking a potential drag from a pointerdown. Calls `onClick` if the pointer is released without dragging. */
 export function trackDrag(e: PointerEvent, info: () => DragInfo, onClick?: (ev: PointerEvent) => void) {
   const sx = e.clientX, sy = e.clientY;
+  const root = document.documentElement;
   let started = false;
   let data: DragInfo | null = null;
   const move = (ev: PointerEvent) => {
@@ -50,6 +51,9 @@ export function trackDrag(e: PointerEvent, info: () => DragInfo, onClick?: (ev: 
       if (!data.paths.length) { cleanup(); return; }
       started = true;
       document.documentElement.classList.add('is-dragging');
+      // Capture the pointer so moves keep arriving once the cursor leaves the window;
+      // without it a fast exit never reports an edge position and the drag-out never fires.
+      try { root.setPointerCapture(ev.pointerId); } catch { /* pointer already gone */ }
     }
     // Leaving the window hands the drag to Windows, so files can drop into any app.
     if (IS_TAURI && (ev.clientX <= 0 || ev.clientY <= 0 || ev.clientX >= window.innerWidth - 1 || ev.clientY >= window.innerHeight - 1)) {
@@ -74,6 +78,7 @@ export function trackDrag(e: PointerEvent, info: () => DragInfo, onClick?: (ev: 
   };
   const key = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { ev.preventDefault(); cleanup(); } };
   function cleanup() {
+    try { if (root.hasPointerCapture(e.pointerId)) root.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('keydown', key, true);
