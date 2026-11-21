@@ -91,6 +91,8 @@
 .home-title { font: 600 26px / 1.2 var(--font-display); margin: 0 0 8px; letter-spacing: -0.01em; }
 .home section { margin-top: 24px; }
 .home h2 { font: 600 13px / 1 var(--font-ui); color: var(--text-2); margin: 0 0 10px; }
+.h-head { display: flex; align-items: center; gap: 8px; margin: -6px 0 4px; }
+.h-head h2 { margin: 0; flex: 1 1 auto; }
 .h-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); gap: 8px; }
 .h-tile {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-panel); text-align: left; min-width: 0;

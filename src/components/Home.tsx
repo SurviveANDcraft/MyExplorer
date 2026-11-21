@@ -1,5 +1,5 @@
 import { For, onMount, Show } from 'solid-js';
-import { openPath } from '../commands/actions';
+import { goStorage, openPath } from '../commands/actions';
 import { baseName, fmtDate, fmtSize, parentOf, samePath } from '../lib/fs';
 import { Icon } from '../lib/icons';
 import { animate } from '../lib/motion';
@@ -77,7 +77,7 @@ export function Home() {
           </Show>
         </section>
         <section>
-          <h2>Drives</h2>
+          <div class="h-head"><h2>Drives</h2><button class="btn btn-sm btn-text btn-accent" onClick={() => goStorage()}><Icon name="storage" size={14} />Analyze storage &amp; clean up</button></div>
           <div class="h-grid">
             <For each={drives()}>{(d) => {
               const used = d.total ? 1 - d.free / d.total : 0;

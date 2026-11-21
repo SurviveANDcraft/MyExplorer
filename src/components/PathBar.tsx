@@ -5,7 +5,7 @@ import { baseName, join, normPath, segments } from '../lib/fs';
 import { Icon } from '../lib/icons';
 import { settings } from '../state/settings';
 import { displayName, drives, driveLabel, frecentDirs, iconForPath } from '../state/system';
-import { activeTab, currentDir, navigate, openDir } from '../state/tabs';
+import { activeTab, currentDir, navigate, openDir, tabTitle } from '../state/tabs';
 import { MenuItem, menuToggledOff, openMenuAt, pathEditing, setPathEditing, toast, toastError, viewApi } from '../state/ui';
 
 const subdirCache = new Map<string, Promise<string[]>>();
@@ -27,7 +27,7 @@ async function chevronMenu(el: HTMLElement, path: string | null) {
   try {
     let items: MenuItem[];
     if (path === null) {
-      items = [{ label: 'Home', icon: 'home', run: () => navigate(activeTab(), { kind: 'home' }) }, { sep: true },
+      items = [{ label: 'Home', icon: 'home', run: () => navigate(activeTab(), { kind: 'home' }) }, { label: 'Storage', icon: 'storage', run: () => navigate(activeTab(), { kind: 'storage' }) }, { sep: true },
         ...drives().map((d): MenuItem => ({ label: driveLabel(d), icon: 'drive', run: () => openDir(d.path) }))];
     } else {
       const names = await subdirs(path);
@@ -81,6 +81,7 @@ export function PathBar() {
     const v = raw.trim();
     if (!v) { setPathEditing(false); return; }
     if (/^home$/i.test(v)) { navigate(activeTab(), { kind: 'home' }); setPathEditing(false); return; }
+    if (/^storage$/i.test(v)) { navigate(activeTab(), { kind: 'storage' }); setPathEditing(false); return; }
     const p = normPath(v);
     try {
       await invoke('list_subdirs', { path: p, showHidden: false });
@@ -114,10 +115,10 @@ export function PathBar() {
       onMouseDown={(e) => { if (!pathEditing() && (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('crumbs'))) { e.preventDefault(); setPathEditing(true); } }}>
       <Show when={pathEditing()} fallback={
         <>
-          <span class="pathbar-icon"><Icon name={activeTab().search() ? 'search' : dir() ? iconForPath(dir()!) : 'home'} /></span>
+          <span class="pathbar-icon"><Icon name={activeTab().search() ? 'search' : dir() ? iconForPath(dir()!) : activeTab().loc().kind === 'storage' ? 'storage' : 'home'} /></span>
           <div class="crumbs" ref={crumbs}>
             <button class="crumb-chev" title="Locations" onClick={(e) => chevronMenu(e.currentTarget, null)}><Icon name="chevronRight" size={12} /></button>
-            <Show when={dir()} fallback={<button class="crumb" onClick={() => navigate(activeTab(), { kind: 'home' })}>Home</button>}>
+            <Show when={dir()} fallback={<button class="crumb" onClick={() => navigate(activeTab(), { kind: activeTab().loc().kind === 'storage' ? 'storage' : 'home' })}>{tabTitle(activeTab())}</button>}>
               <For each={segments(dir()!)}>{(s, i) => (
                 <>
                   <button class="crumb" data-drop={s.path} classList={{ last: i() === segments(dir()!).length - 1 && !activeTab().search() }} onClick={() => openDir(s.path)}

@@ -30,6 +30,8 @@ export interface Settings {
   /** Beta: "Search in files" (content search). Off by default. */
   contentSearch: boolean;
   columns: Record<ColumnId, number>;
+  /** Storage page: lowercase paths marked "keep" (never suggested again). */
+  storageIgnored: string[];
 }
 
 export const ACCENTS = ['#2f6fea', '#0f8a8a', '#16a34a', '#7c5cff', '#c2418a', '#e2564b', '#d97a16', '#5f6b7a'];
@@ -54,6 +56,7 @@ export const DEFAULTS: Settings = {
   grepPreviewWidth: 560,
   contentSearch: false,
   columns: { name: 340, modified: 172, type: 168, size: 96, folder: 300 },
+  storageIgnored: [],
 };
 
 export const [settings, setSettings] = createStore<Settings>(structuredClone(DEFAULTS));

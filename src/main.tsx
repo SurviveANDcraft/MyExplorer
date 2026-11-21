@@ -5,6 +5,7 @@ import './styles/chrome.css';
 import './styles/sidebar.css';
 import './styles/view.css';
 import './styles/overlays.css';
+import './styles/storage.css';
 import App from './App';
 import { registerCommands } from './commands/defs';
 import { invoke, IS_TAURI, listen } from './ipc/invoke';

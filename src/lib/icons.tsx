@@ -74,6 +74,7 @@ const ICONS = {
   selectAll: '<rect x="4" y="4" width="16" height="16" rx="3"/>' + p('M8 12.3l2.8 2.7L16 9.5'),
   palette: p('M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1-1.5-1-2.6 0-1 .8-1.7 1.8-1.7h2.2a3.7 3.7 0 0 0 3.7-3.7C20.5 6.9 16.7 3.5 12 3.5z') + dot(7.8, 11.5) + dot(10, 7.6) + dot(14.5, 7.6),
   minus: p('M5 12h14'),
+  storage: p('M12 3.5a8.5 8.5 0 1 0 8.5 8.5H12z') + p('M15 3.9A8.5 8.5 0 0 1 20.1 9H15z'),
 } as const;
 export type IconName = keyof typeof ICONS;
 

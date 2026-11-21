@@ -123,6 +123,30 @@ export interface AgentState { id: string; name: string; detected: boolean; insta
 export interface AgentsStatus { mxPath: string | null; onPath: boolean; agents: AgentState[]; devBuild: boolean }
 export interface ArchiveProgress { id: number; done: number; total: number }
 
+// ── Storage ──────────────────────────────────────────────────────────────────
+/** Treemap block. t: 0 file · 1 folder · 2 smaller items grouped (n = how many). c: category (see state/storage.ts). */
+export interface DiskNode { n: string; s: number; f: number; t: 0 | 1 | 2; c: number; m: number; k?: DiskNode[] }
+export interface DiskTree {
+  path: string; size: number; files: number;
+  /** Bytes per category inside path. */
+  cats: number[];
+  /** Folders still being sized on disk (totals will grow). */
+  pending: number;
+  root: DiskNode; tookMs: number;
+}
+export type CleanupKind = 'rebuildable' | 'cache' | 'temp' | 'installer' | 'archive' | 'duplicate' | 'diskimage' | 'media' | 'stale' | 'download' | 'large';
+export interface CleanupItem {
+  path: string; name: string; dir: boolean; size: number; files: number;
+  modified: number;
+  /** Latest of modified / created / last opened. */
+  lastUsed: number;
+  kind: CleanupKind; cat: number; reasons: string[]; score: number;
+  /** Inside another suggested folder. */
+  nested: boolean;
+}
+export interface CleanupList { items: CleanupItem[]; total: number; pending: number; tookMs: number }
+export interface RecycleBin { size: number; items: number }
+
 // ── Commands ─────────────────────────────────────────────────────────────────
 export interface Commands {
   // filesystem — read
@@ -220,6 +244,17 @@ export interface Commands {
   hotkey_free(a: { mods: number; vk: number }): boolean;
   /** Drop cached folder totals affected by changes at these paths (self, ancestors, subtree). */
   invalidate_dir_sizes(a: { paths: string[] }): void;
+
+  // storage page (live: `disk:changed`). null = index not ready yet / path not indexed.
+  disk_tree(a: { path: string }): DiskTree | null;
+  disk_suggest(a: { scope: string | null; minSize: number; limit: number }): CleanupList | null;
+  /** After deleting: drop what's gone from the index immediately. */
+  disk_forget(a: { paths: string[] }): void;
+  /** Storage page closed: free its caches. */
+  disk_release(): void;
+  recycle_bin_info(): RecycleBin;
+  /** Empties every drive's Recycle Bin (Windows asks for confirmation). */
+  empty_recycle_bin(): void;
 }
 
 // ── Events (backend → frontend, via Tauri `listen`) ──────────────────────────
@@ -228,7 +263,8 @@ export interface Events {
   'index:status': IndexStatus;
   'app:open': LaunchReq;
   'grep:batch': GrepBatch;
-  'archive:progress': ArchiveProgress;            // another launch (e.g. a folder double-clicked on the desktop) was forwarded here
+  'archive:progress': ArchiveProgress;
+  'disk:changed': number;                         // index contents or folder sizes changed            // another launch (e.g. a folder double-clicked on the desktop) was forwarded here
 }
 
 /** What the app was asked to open at launch. path null = Home; select = item to highlight in path. */

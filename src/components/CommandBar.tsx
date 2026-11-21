@@ -1,7 +1,7 @@
 import { runCommand, tip } from '../commands/registry';
 import { Icon, IconName } from '../lib/icons';
 import { settings } from '../state/settings';
-import { activeTab, currentDir } from '../state/tabs';
+import { activeTab, currentDir, isPage } from '../state/tabs';
 import { MenuItem, openMenuAt } from '../state/ui';
 import { newMenu, sortMenu, viewMenu } from './menus';
 import { CmdButton } from './NavRow';
@@ -38,7 +38,7 @@ export function CommandBar() {
       <CmdButton cmd="edit.rename" />
       <CmdButton cmd="edit.delete" />
       <span class="vsep" />
-      <MenuButton label="Sort" icon="sort" items={() => sortMenu(t())} disabled={t().loc().kind === 'home' && !t().search()} />
+      <MenuButton label="Sort" icon="sort" items={() => sortMenu(t())} disabled={isPage(t().loc()) && !t().search()} />
       <MenuButton label="View" icon={viewIcon()} items={() => viewMenu(t())} />
       <span class="vsep" />
       <button class="btn btn-icon" data-tip="More options" aria-label="More options"

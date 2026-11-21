@@ -16,7 +16,9 @@ export interface Model {
 export const emptyModel = (dir: string | null = null): Model => ({ dir, count: 0, names: [], sizes: [], modified: [], flags: [], paths: null });
 export const pathAt = (m: Model, i: number) => (m.paths ? m.paths[i] : join(m.dir!, m.names[i]));
 
-export type Loc = { kind: 'home' } | { kind: 'dir'; path: string };
+export type Loc = { kind: 'home' } | { kind: 'storage' } | { kind: 'dir'; path: string };
+/** Pages that aren't folders (no listing, no sort/view). */
+export const isPage = (l: Loc) => l.kind !== 'dir';
 interface Hist { loc: Loc; sel: string[]; scroll: number }
 export type Status = 'ready' | 'pending' | 'loading' | 'error';
 /** content: search inside files (see state/grep.ts) instead of names. */
@@ -77,7 +79,7 @@ export const currentDir = (t: Tab = activeTab()) => { const l = t.loc(); return 
 
 export function tabTitle(t: Tab) {
   const l = t.loc();
-  return l.kind === 'home' ? 'Home' : displayName(l.path);
+  return l.kind === 'home' ? 'Home' : l.kind === 'storage' ? 'Storage' : displayName(l.path);
 }
 
 export function newTab(loc: Loc, opts: { activate?: boolean; after?: Tab } = {}) {
@@ -129,7 +131,7 @@ function snapshot(t: Tab): Hist {
 
 export function navigate(t: Tab, loc: Loc, opts: { push?: boolean; dir?: 'fwd' | 'back'; sel?: string[]; scroll?: number } = {}) {
   const cur = t.loc();
-  const same = cur.kind === loc.kind && (loc.kind === 'home' || samePath((cur as { path: string }).path, loc.path));
+  const same = cur.kind === loc.kind && (loc.kind !== 'dir' || samePath((cur as { path: string }).path, loc.path));
   if (same && !t.search()) { if (loc.kind === 'dir') refresh(t); return; }
   if (opts.push !== false && !same) { t.back.push(snapshot(t)); if (t.back.length > 100) t.back.shift(); t.fwd.length = 0; }
   t.setHist((n) => n + 1);
@@ -143,7 +145,7 @@ export function navigate(t: Tab, loc: Loc, opts: { push?: boolean; dir?: 'fwd' |
     t.setLoc(loc);
     t.setError(null);
   });
-  if (loc.kind === 'home') {
+  if (loc.kind !== 'dir') {
     t.token++;
     watch(t, null);
     batch(() => { t.setStatus('ready'); t.setModel(emptyModel()); t.sel.clear(); t.setSelV((v) => v + 1); });

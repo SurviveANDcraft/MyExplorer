@@ -32,6 +32,7 @@ export function registerCommands() {
     { id: 'nav.up', label: 'Up one level', category: 'Navigate', keys: ['Alt+ArrowUp', 'Backspace'], icon: 'up', run: () => goUp(activeTab()), enabled: () => !!currentDir() || !!activeTab().search() },
     { id: 'nav.refresh', label: 'Refresh', category: 'Navigate', keys: ['F5', 'Ctrl+R'], icon: 'refresh', inInput: true, run: () => refresh(activeTab()) },
     { id: 'nav.home', label: 'Go to Home', category: 'Navigate', keys: ['Alt+Home'], icon: 'home', run: () => A.goHome() },
+    { id: 'nav.storage', label: 'Storage: see what fills your drives and clean up', category: 'Navigate', icon: 'storage', run: () => A.goStorage() },
     { id: 'path.edit', label: 'Edit path', category: 'Navigate', keys: ['Ctrl+L', 'Alt+D', 'F4'], icon: 'link', inInput: true, run: () => setPathEditing(true) },
     // Open
     { id: 'item.open', label: 'Open', category: 'File', keys: ['Enter'], icon: 'external', run: () => A.openSelection(), enabled: () => hasSel() || activeTab().focus() >= 0 },

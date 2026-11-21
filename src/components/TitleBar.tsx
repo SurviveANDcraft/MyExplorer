@@ -49,8 +49,8 @@ function TabItem(p: { tab: Tab; index: number }) {
   const dir = () => currentDir(p.tab);
   return (
     <div ref={el} class="tab" classList={{ active: activeId() === p.tab.id }} data-tab-id={p.tab.id} data-drop={dir() ?? undefined}
-      role="tab" aria-selected={activeId() === p.tab.id} title={dir() ?? 'Home'} onPointerDown={onDown} onContextMenu={onMenu}>
-      <Icon name={p.tab.search() ? 'search' : dir() ? iconForPath(dir()!) : 'home'} />
+      role="tab" aria-selected={activeId() === p.tab.id} title={dir() ?? tabTitle(p.tab)} onPointerDown={onDown} onContextMenu={onMenu}>
+      <Icon name={p.tab.search() ? 'search' : dir() ? iconForPath(dir()!) : p.tab.loc().kind === 'storage' ? 'storage' : 'home'} />
       <span class="tab-title">{p.tab.search() ? `Search: ${p.tab.search()!.query || '…'}` : tabTitle(p.tab)}</span>
       <button class="tab-close" title={tip('tab.close', 'Close tab')} onClick={() => closeTab(p.tab)}><Icon name="close" size={12} /></button>
     </div>

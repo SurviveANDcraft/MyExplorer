@@ -1,6 +1,6 @@
 // In-memory backend used when the UI runs in a plain browser (`pnpm dev` without Tauri).
 import { Flag } from './types';
-import type { AppError, DirListing, Drive, FileInfo, Frecent, SearchHit, Sort, Suggestion } from './types';
+import type { AppError, CleanupItem, CleanupList, DirListing, DiskNode, DiskTree, Drive, FileInfo, Frecent, SearchHit, Sort, Suggestion } from './types';
 
 interface N { name: string; dir: boolean; size: number; mod: number; cre: number; flags: number; kids?: Map<string, N>; deny?: boolean }
 
@@ -317,7 +317,43 @@ export async function handle(cmd: string, a: any): Promise<unknown> {
     case 'agents_status': case 'set_agent': return { mxPath: null, onPath: false, agents: [], devBuild: true };
     case 'agents_prompt': return '';
     case 'prepare_update': case 'release_single_instance_lock': case 'open_notices': return null;
-    case 'invalidate_dir_sizes': return null;
+    case 'invalidate_dir_sizes': case 'disk_forget': case 'disk_release': case 'empty_recycle_bin': return null;
+    case 'disk_tree': {
+      const root = must(a.path);
+      const CAT: Record<string, number> = { mp4: 1, mov: 1, jpg: 2, png: 2, heic: 2, svg: 2, mp3: 3, flac: 3, zip: 4, '7z': 4, pdf: 5, docx: 5, xlsx: 5, pptx: 5, md: 5, txt: 5, csv: 5, ts: 6, tsx: 6, rs: 6, py: 6, json: 6, css: 6, html: 6, exe: 7, msi: 7, iso: 8, sys: 9 };
+      const cats = Array(10).fill(0);
+      let files = 0;
+      const conv = (n: N, depth: number): DiskNode => {
+        if (!n.dir) { const c = CAT[extOf(n.name)] ?? 0; cats[c] += n.size; files++; return { n: n.name, s: n.size, f: 1, t: 0, c, m: n.mod }; }
+        const fake = n.name === 'node_modules' || n.name === '.git' ? 3e8 + rnd() * 9e8 : 0;
+        if (fake) { cats[6] += fake; return { n: n.name, s: fake, f: 4000, t: 1, c: 6, m: n.mod }; }
+        const k = [...(n.kids?.values() ?? [])].map((c) => conv(c, depth + 1)).filter((c) => c.s > 0).sort((x, y) => y.s - x.s);
+        return { n: depth ? n.name : a.path, s: k.reduce((t, c) => t + c.s, 0), f: k.reduce((t, c) => t + c.f, 0), t: 1, c: 0, m: n.mod, k };
+      };
+      const r = conv(root, 0);
+      return { path: a.path, size: r.s, files, cats, pending: 0, root: r, tookMs: 3 } satisfies DiskTree;
+    }
+    case 'disk_suggest': {
+      const items: CleanupItem[] = [];
+      const walk = (n: N, path: string) => {
+        for (const c of n.kids?.values() ?? []) {
+          const p = joinP(path, c.name);
+          if (c.dir) {
+            if (c.name === 'node_modules') items.push({ path: p, name: c.name, dir: true, size: 6e8, files: 12000, modified: c.mod, lastUsed: c.mod, kind: 'rebuildable', cat: 6, reasons: ['Dependencies — `npm install` brings them back'], score: 80, nested: false });
+            else if (!(c.flags & Flag.System)) walk(c, p);
+          } else if (c.size >= a.minSize) {
+            const e = extOf(c.name);
+            const kind = e === 'exe' || e === 'msi' ? 'installer' : e === 'zip' || e === '7z' ? 'archive' : e === 'iso' ? 'diskimage' : 'download';
+            items.push({ path: p, name: c.name, dir: false, size: c.size, files: 1, modified: c.mod, lastUsed: c.mod, kind, cat: 0, reasons: kind === 'installer' ? ['Installer — you can download it again', 'In Downloads'] : ['In Downloads'], score: c.size / 1e7, nested: false });
+          }
+        }
+      };
+      const scope: string = a.scope ?? 'C:\\';
+      walk(must(scope), scope.replace(/\\$/, ''));
+      items.sort((x, y) => y.score - x.score);
+      return { items, total: items.length, pending: 0, tookMs: 2 } satisfies CleanupList;
+    }
+    case 'recycle_bin_info': return { size: 2.4e9, items: 37 };
   }
   return fail('unsupported', `Mock: unknown command ${cmd}`);
 }

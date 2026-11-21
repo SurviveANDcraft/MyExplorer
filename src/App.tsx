@@ -15,6 +15,7 @@ import { FileView } from './components/FileView';
 import { GrepView } from './components/GrepView';
 import { SearchStrip } from './components/SearchStrip';
 import { Home } from './components/Home';
+import { Storage } from './components/Storage';
 import { NavRow } from './components/NavRow';
 import { DragGhost, Toasts, Tooltip } from './components/Overlays';
 import { Palette } from './components/Palette';
@@ -62,7 +63,7 @@ export default function App() {
     window.setTimeout(() => prewarmShellMenu(currentDir() ?? 'C:\\'), 2500);
   });
 
-  const showHome = () => activeTab()?.loc().kind === 'home' && !activeTab().search();
+  const page = () => (activeTab()?.search() ? null : activeTab()?.loc().kind ?? null);
   return (
     <div class="app" classList={{ 'no-mica': !IS_TAURI }}>
       <TitleBar />
@@ -75,15 +76,17 @@ export default function App() {
             <div class="viewwrap">
               <Show when={activeTab()} keyed>
                 {(t) => (
-                  <Show when={!showHome()} fallback={<Home />}>
-                    <Show when={t.search()?.content} fallback={<FileView tab={t} />}>
-                      <div class="grep-wrap"><SearchStrip tab={t} /><GrepView tab={t} /></div>
+                  <Show when={page() !== 'home'} fallback={<Home />}>
+                    <Show when={page() !== 'storage'} fallback={<Storage />}>
+                      <Show when={t.search()?.content} fallback={<FileView tab={t} />}>
+                        <div class="grep-wrap"><SearchStrip tab={t} /><GrepView tab={t} /></div>
+                      </Show>
                     </Show>
                   </Show>
                 )}
               </Show>
             </div>
-            <Show when={settings.previewPane && !activeTab()?.search()?.content}><PreviewPane /></Show>
+            <Show when={settings.previewPane && !activeTab()?.search()?.content && page() !== 'storage'}><PreviewPane /></Show>
           </div>
           <StatusBar />
         </main>

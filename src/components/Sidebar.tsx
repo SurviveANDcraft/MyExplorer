@@ -101,6 +101,7 @@ export function Sidebar() {
   let pinList!: HTMLDivElement;
   const frequent = () => frecentDirs().filter((f) => !settings.pinned.some((p) => samePath(p, f.path))).slice(0, 5);
   const homeActive = () => activeTab().loc().kind === 'home' && !activeTab().search();
+  const storageActive = () => activeTab().loc().kind === 'storage' && !activeTab().search();
   const startResize = (e: PointerEvent) => {
     e.preventDefault();
     const x0 = e.clientX, w0 = settings.sidebarWidth;
@@ -115,6 +116,9 @@ export function Sidebar() {
       <div class="sb-scroll">
         <div class="sb-item sb-top" classList={{ active: homeActive() }} onClick={() => navigate(activeTab(), { kind: 'home' })}>
           <span class="sb-chev-space" /><Icon name="home" /><span class="sb-label">Home</span>
+        </div>
+        <div class="sb-item sb-top" classList={{ active: storageActive() }} onClick={() => navigate(activeTab(), { kind: 'storage' })}>
+          <span class="sb-chev-space" /><Icon name="storage" /><span class="sb-label">Storage</span>
         </div>
         <Show when={settings.pinned.length}>
           <Section title="Pinned">

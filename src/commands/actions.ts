@@ -208,6 +208,7 @@ export function duplicateTab(t: Tab = activeTab()) {
   newTab(t.loc(), { after: t });
 }
 export function goHome(t: Tab = activeTab()) { navigate(t, { kind: 'home' }); }
+export function goStorage(t: Tab = activeTab()) { navigate(t, { kind: 'storage' }); }
 export const newTabHere = () => {
   const startup = settings.startup;
   newTab(startup && startup !== 'home' ? { kind: 'dir', path: startup } : { kind: 'home' }, { after: activeTab() });

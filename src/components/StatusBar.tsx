@@ -3,7 +3,7 @@ import { tip } from '../commands/registry';
 import { fmtCount, fmtSize, isDir } from '../lib/fs';
 import { Icon } from '../lib/icons';
 import { indexStatus } from '../state/system';
-import { activeTab, updateView } from '../state/tabs';
+import { activeTab, isPage, updateView } from '../state/tabs';
 
 export function StatusBar() {
   const t = activeTab;
@@ -15,7 +15,7 @@ export function StatusBar() {
     for (const i of tab.sel) { if (i >= m.count) continue; sel++; if (!isDir(m.flags[i])) { bytes += m.sizes[i]; files++; } }
     return { count: m.count, sel, bytes, files };
   });
-  const home = () => t().loc().kind === 'home' && !t().search();
+  const home = () => isPage(t().loc()) && !t().search();
   const view = () => t().view().view;
   return (
     <footer class="statusbar">
