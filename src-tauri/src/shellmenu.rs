@@ -15,7 +15,7 @@ use windows::Win32::System::Com::{IBindCtx, IDataObject};
 use windows::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    IContextMenu, IContextMenu2, IContextMenu3, IShellFolder, ILFree, SHBindToParent, SHCreateDataObject, SHDoDragDrop,
+    IContextMenu, IContextMenu2, IContextMenu3, IShellFolder, ILFree, SHBindToParent, SHCreateShellItemArrayFromIDLists, SHDoDragDrop, BHID_DataObject,
     SHGetDesktopFolder, SHParseDisplayName, CMF_CANRENAME, CMF_EXPLORE, CMF_EXTENDEDVERBS, CMF_NORMAL, CMIC_MASK_PTINVOKE,
     CMINVOKECOMMANDINFO, CMINVOKECOMMANDINFOEX, GCS_VERBW,
 };
@@ -376,7 +376,11 @@ pub async fn drag_out(paths: Vec<String>) -> AppResult<String> {
             let raw: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| p.0 as *const _).collect();
             // SAFETY: the UI thread is OLE-initialized (WebView2 needs it for drag & drop).
             unsafe {
-                let data: IDataObject = SHCreateDataObject(None, Some(&raw), None::<&IDataObject>)?;
+                // Same data object Explorer builds for a selection (CF_HDROP, shell ID lists…).
+                // SHCreateDataObject with absolute pidls and no parent folder yields an object
+                // with no file formats, so every drop target refuses it.
+                let items = SHCreateShellItemArrayFromIDLists(&raw)?;
+                let data: IDataObject = items.BindToHandler(None::<&IBindCtx>, &BHID_DataObject)?;
                 SHDoDragDrop(main_hwnd(), &data, None, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK).map_err(AppError::from)
             }
         })();
