@@ -3,7 +3,7 @@
 //! `grep:batch` events, each file scored for how likely it is what the user is after.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -40,6 +40,8 @@ pub struct LineHit {
     pub text: String,
     /// [start, end) in UTF-16 code units of `text`.
     pub ranges: Vec<[u32; 2]>,
+    /// Contains the whole query (not just one of its words).
+    pub phrase: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +54,8 @@ pub struct FileHit {
     pub score: f32,
     pub matches: u32,
     pub lines: Vec<LineHit>,
+    /// A matching line looks like where the term is defined (`fn x`, `class X`, `# Heading`).
+    pub definition: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -200,7 +204,21 @@ impl Sink for Collect<'_> {
                 }
             }
         }
-        if self.lines.len() < MAX_LINES && !ranges.is_empty() {
+        // Keep the first MAX_LINES lines, but let whole-phrase lines displace single-word ones.
+        let slot = if self.lines.len() < MAX_LINES {
+            true
+        } else if has_phrase {
+            match self.lines.iter().position(|l| !l.phrase) {
+                Some(i) => {
+                    self.lines.remove(i);
+                    true
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
+        if slot && !ranges.is_empty() {
             let lead = line.len() - line.trim_start().len();
             let mut start = lead;
             let first = ranges[0].0;
@@ -231,7 +249,7 @@ impl Sink for Collect<'_> {
             let prefix = if start > lead { "…" } else { "" };
             let shift = u16_len(prefix);
             let ranges = out.into_iter().map(|[a, b]| [a + shift, b + shift]).collect();
-            self.lines.push(LineHit { line: m.line_number().unwrap_or(0) as u32, text: format!("{prefix}{}", text.trim_end()), ranges });
+            self.lines.push(LineHit { line: m.line_number().unwrap_or(0) as u32, text: format!("{prefix}{}", text.trim_end()), ranges, phrase: has_phrase });
         }
         Ok(self.matches < MAX_MATCHES)
     }
@@ -246,6 +264,17 @@ struct Ctx {
     now: i64,
     tx: Sender<FileHit>,
     scanned: AtomicUsize,
+    /// Private stop flag (mx grep); None = cancelled when a newer UI search starts.
+    stop: Option<Arc<AtomicBool>>,
+}
+
+impl Ctx {
+    fn cancelled(&self) -> bool {
+        match &self.stop {
+            Some(s) => s.load(Ordering::Relaxed),
+            None => CURRENT.load(Ordering::Relaxed) != self.req,
+        }
+    }
 }
 
 fn noisy_path(lower: &str) -> bool {
@@ -312,7 +341,7 @@ fn search_file(c: &Ctx, s: &mut Searcher, path: &str, size: u64, modified: i64) 
     if size > 2 << 20 {
         score -= 8.0;
     }
-    let _ = c.tx.send(FileHit { path: path.to_string(), name, size, modified, score, matches: sink.matches, lines: sink.lines });
+    let _ = c.tx.send(FileHit { path: path.to_string(), name, size, modified, score, matches: sink.matches, lines: sink.lines, definition: sink.definition });
 }
 
 fn new_searcher() -> Searcher {
@@ -351,7 +380,7 @@ fn walk_folder(c: &Arc<Ctx>, root: &str, include_hidden: bool) {
         let c = c.clone();
         let mut s = new_searcher();
         Box::new(move |e| {
-            if CURRENT.load(Ordering::Relaxed) != c.req {
+            if c.cancelled() {
                 return ignore::WalkState::Quit;
             }
             let Ok(e) = e else { return ignore::WalkState::Continue };
@@ -415,7 +444,7 @@ fn search_index(c: &Arc<Ctx>, mut cands: Vec<(String, u64, i64)>) {
             sc.spawn(move || {
                 let mut s = new_searcher();
                 loop {
-                    if CURRENT.load(Ordering::Relaxed) != c.req {
+                    if c.cancelled() {
                         return;
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
@@ -425,6 +454,76 @@ fn search_index(c: &Arc<Ctx>, mut cands: Vec<(String, u64, i64)>) {
             });
         }
     });
+}
+
+fn run_search(ctx: &Arc<Ctx>, scope: Option<&str>, include_hidden: bool) {
+    match scope {
+        Some(dir) => walk_folder(ctx, dir, include_hidden),
+        None => {
+            let accept = |lower: &[u8], size: u64| {
+                size <= 16 << 20 && lower.iter().rposition(|&b| b == b'.').is_some_and(|i| TEXT_EXTS.contains(&lower[i + 1..]))
+            };
+            match crate::index::file_candidates(accept, include_hidden) {
+                Some(c) => search_index(ctx, c),
+                None => walk_folder(ctx, &crate::fs::HOME, include_hidden),
+            }
+        }
+    }
+}
+
+pub struct BlockingResult {
+    /// Best first.
+    pub files: Vec<FileHit>,
+    pub scanned: usize,
+    pub timed_out: bool,
+}
+
+/// Runs a search to completion (or `timeout`) on the calling thread, independent of the UI's
+/// search: used by `mx grep`.
+pub fn search_blocking(query: &str, o: &GrepOptions, timeout: Duration) -> AppResult<BlockingResult> {
+    let q = build(query, o)?;
+    let (tx, rx) = unbounded::<FileHit>();
+    let stop = Arc::new(AtomicBool::new(false));
+    let ctx = Arc::new(Ctx {
+        req: 0,
+        req_f: 0.0,
+        q,
+        regex: o.regex,
+        frec: crate::index::frecency(),
+        now: now_ms(),
+        tx,
+        scanned: AtomicUsize::new(0),
+        stop: Some(stop.clone()),
+    });
+    let scope = o.scope.as_deref().map(norm_path).filter(|s| !s.is_empty());
+    let include_hidden = o.include_hidden;
+    let worker = {
+        let ctx = ctx.clone();
+        std::thread::Builder::new()
+            .name("mx-grep".into())
+            .spawn(move || run_search(&ctx, scope.as_deref(), include_hidden))
+            .map_err(|e| AppError::io(e.to_string()))?
+    };
+    let t0 = Instant::now();
+    let mut files = Vec::new();
+    let mut timed_out = false;
+    loop {
+        if let Ok(h) = rx.recv_timeout(Duration::from_millis(15)) {
+            files.push(h);
+        }
+        if worker.is_finished() {
+            break;
+        }
+        if t0.elapsed() >= timeout {
+            stop.store(true, Ordering::Relaxed);
+            timed_out = true;
+            let _ = worker.join();
+            break;
+        }
+    }
+    files.extend(rx.try_iter());
+    files.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+    Ok(BlockingResult { files, scanned: ctx.scanned.load(Ordering::Relaxed), timed_out })
 }
 
 pub fn cancel() {
@@ -445,6 +544,7 @@ pub fn start(req_id: f64, query: String, o: GrepOptions) -> AppResult<()> {
         now: now_ms(),
         tx,
         scanned: AtomicUsize::new(0),
+        stop: None,
     });
     let scope = o.scope.as_deref().map(norm_path).filter(|s| !s.is_empty());
     let t0 = Instant::now();
@@ -455,20 +555,7 @@ pub fn start(req_id: f64, query: String, o: GrepOptions) -> AppResult<()> {
         let include_hidden = o.include_hidden;
         std::thread::Builder::new()
             .name("grep".into())
-            .spawn(move || {
-                match scope {
-                    Some(dir) => walk_folder(&ctx, &dir, include_hidden),
-                    None => {
-                        let accept = |lower: &[u8], size: u64| {
-                            size <= 16 << 20 && lower.iter().rposition(|&b| b == b'.').is_some_and(|i| TEXT_EXTS.contains(&lower[i + 1..]))
-                        };
-                        match crate::index::file_candidates(accept, include_hidden) {
-                            Some(c) => search_index(&ctx, c),
-                            None => walk_folder(&ctx, &crate::fs::HOME, include_hidden),
-                        }
-                    }
-                }
-            })
+            .spawn(move || run_search(&ctx, scope.as_deref(), include_hidden))
             .map_err(|e| AppError::io(e.to_string()))?
     };
 
@@ -534,7 +621,7 @@ mod tests {
 
     fn run(dir: &std::path::Path, q: &str, o: &GrepOptions) -> Vec<FileHit> {
         let (tx, rx) = unbounded();
-        let c = Arc::new(Ctx { req: CURRENT.load(Ordering::Relaxed), req_f: 0.0, q: build(q, o).unwrap(), regex: o.regex, frec: Arc::new(HashMap::new()), now: now_ms(), tx, scanned: AtomicUsize::new(0) });
+        let c = Arc::new(Ctx { req: CURRENT.load(Ordering::Relaxed), req_f: 0.0, q: build(q, o).unwrap(), regex: o.regex, frec: Arc::new(HashMap::new()), now: now_ms(), tx, scanned: AtomicUsize::new(0), stop: None });
         walk_folder(&c, &dir.to_string_lossy(), false);
         drop(c);
         let mut v: Vec<FileHit> = rx.try_iter().collect();
@@ -578,7 +665,7 @@ mod bench {
         let o = GrepOptions { scope: None, case_sensitive: false, whole_word: false, regex: false, include_hidden: false };
         let (tx, rx) = unbounded();
         let t0 = Instant::now();
-        let c = Arc::new(Ctx { req: CURRENT.load(Ordering::Relaxed), req_f: 0.0, q: build("function", &o).unwrap(), regex: false, frec: Arc::new(HashMap::new()), now: now_ms(), tx, scanned: AtomicUsize::new(0) });
+        let c = Arc::new(Ctx { req: CURRENT.load(Ordering::Relaxed), req_f: 0.0, q: build("function", &o).unwrap(), regex: false, frec: Arc::new(HashMap::new()), now: now_ms(), tx, scanned: AtomicUsize::new(0), stop: None });
         walk_folder(&c, &dir, false);
         let n = rx.try_iter().count();
         eprintln!("BENCH scanned={} matched={} in {:?}", c.scanned.load(Ordering::Relaxed), n, t0.elapsed());

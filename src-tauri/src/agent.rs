@@ -194,6 +194,7 @@ const USAGE: &str = "\
 mx — instant file search over the MyExplorer index (all fixed drives).
 usage: mx [opts] <query> [<query> ...]   each argument is one query; several run in parallel
        mx size [-n N] <path> [<path> ...]   total size on disk; -n N = also the N biggest items inside
+       mx grep [opts] <text> [<text> ...]   search inside files (beta), best match first; mx grep -h
        mx status | mx stop
 opts:  -n N      results per query (default 20)
        -i PATH   only inside PATH (relative to cwd ok)
@@ -290,6 +291,7 @@ fn run(cwd: &str, args: &[String]) -> (u8, String) {
         None | Some("-h") | Some("--help") | Some("help") => return (0, USAGE.to_string()),
         Some("status") if args.len() == 1 => return (0, status_line()),
         Some("size") | Some("du") => return run_size(cwd, &args[1..]),
+        Some("grep") | Some("rg") => return run_grep(cwd, &args[1..]),
         _ => {}
     }
     let req = match parse_args(cwd, args) {
@@ -431,6 +433,198 @@ fn run_size(cwd: &str, args: &[String]) -> (u8, String) {
         out.push_str(&format!("({:.1} ms)\n", t0.elapsed().as_secs_f64() * 1000.0));
     }
     (if ok { 0 } else { 1 }, out)
+}
+
+const GREP_USAGE: &str = "\
+mx grep (beta) — search text inside files with ripgrep's engine, ranked best match first.
+usage: mx grep [opts] <text> [<text> ...]   each argument is one search
+opts:  -i PATH        search inside PATH (default: current folder; .gitignore respected)
+       --everywhere   all indexed text files on every drive instead of the current folder
+       -n N           files to show (default 20)        -m N   lines per file (default 4, max 12)
+       -s             case-sensitive    -w  whole word    -r  regex    -a  include hidden files
+       -l             paths only        --json            structured output
+       --abs          absolute paths    --timeout SECS    give up after SECS (default 30)
+text:  several words match the exact phrase, or files containing all the words
+ranking: definitions (fn/class/def/# heading), exact phrase and case, name match, recent and
+         often-used files first; build output, node_modules, minified/lock/log files last
+";
+
+struct GrepReq {
+    opts: crate::grep::GrepOptions,
+    limit: usize,
+    lines: usize,
+    paths_only: bool,
+    json: bool,
+    abs: bool,
+    timeout: u64,
+    queries: Vec<String>,
+}
+
+fn parse_grep_args(cwd: &str, args: &[String]) -> Result<GrepReq, String> {
+    let mut r = GrepReq {
+        opts: crate::grep::GrepOptions { scope: None, case_sensitive: false, whole_word: false, regex: false, include_hidden: false },
+        limit: DEFAULT_LIMIT,
+        lines: 4,
+        paths_only: false,
+        json: false,
+        abs: false,
+        timeout: 30,
+        queries: Vec::new(),
+    };
+    let mut everywhere = false;
+    let num = |v: Option<&String>, what: &str| -> Result<usize, String> {
+        let v = v.ok_or(format!("{what} needs a number"))?;
+        v.parse::<usize>().map_err(|_| format!("bad {what} value: {v}"))
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-n" | "--limit" => r.limit = num(it.next(), "-n")?.clamp(1, MAX_LIMIT),
+            "-m" | "--lines" => r.lines = num(it.next(), "-m")?.min(12),
+            "--timeout" => r.timeout = num(it.next(), "--timeout")?.clamp(1, 600) as u64,
+            "-i" | "--in" => r.opts.scope = Some(resolve_path(cwd, it.next().ok_or("-i needs a path")?)),
+            "--everywhere" | "-g" => everywhere = true,
+            "-s" | "--case-sensitive" => r.opts.case_sensitive = true,
+            "-w" | "--word" => r.opts.whole_word = true,
+            "-r" | "--regex" => r.opts.regex = true,
+            "-a" | "--all" => r.opts.include_hidden = true,
+            "-l" | "--files" => r.paths_only = true,
+            "--json" => r.json = true,
+            "--abs" => r.abs = true,
+            "--" => r.queries.extend(it.by_ref().cloned()),
+            s if s.len() > 1 && s.starts_with('-') && !s.contains(' ') => {
+                if let Some(n) = s.strip_prefix("-n").and_then(|v| v.parse::<usize>().ok()) {
+                    r.limit = n.clamp(1, MAX_LIMIT);
+                } else {
+                    return Err(format!("unknown option {s} (text starting with '-' goes after --)"));
+                }
+            }
+            _ => r.queries.push(a.clone()),
+        }
+    }
+    r.queries.retain(|q| !q.trim().is_empty());
+    if everywhere {
+        r.opts.scope = None;
+    } else if r.opts.scope.is_none() {
+        if cwd.is_empty() {
+            return Err("no current folder; pass -i PATH or --everywhere".into());
+        }
+        r.opts.scope = Some(resolve_path(cwd, "."));
+    }
+    Ok(r)
+}
+
+/// `mx grep`: content search with the app's ranked engine, laid out for agents.
+fn run_grep(cwd: &str, args: &[String]) -> (u8, String) {
+    if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help" | "help") {
+        return (if args.is_empty() { 2 } else { 0 }, GREP_USAGE.to_string());
+    }
+    let req = match parse_grep_args(cwd, args) {
+        Ok(r) => r,
+        Err(e) => return (2, format!("mx grep: {e}\n{GREP_USAGE}")),
+    };
+    if req.queries.is_empty() {
+        return (2, GREP_USAGE.to_string());
+    }
+    match &req.opts.scope {
+        Some(sc) if crate::fs::attributes(sc).is_none_or(|a| a & FA_DIRECTORY == 0) => return (2, format!("mx grep: not a folder: {sc}\n")),
+        Some(_) => {}
+        None => {
+            index::wait_searchable(Duration::from_secs(60));
+        }
+    }
+    let rel = if req.abs { None } else { Some(norm_path(cwd)) };
+    let where_ = match req.opts.scope.as_deref() {
+        None => "all drives".to_string(),
+        Some(s) if rel.as_deref().is_some_and(|r| r.trim_end_matches('\\').eq_ignore_ascii_case(s.trim_end_matches('\\'))) => ".".into(),
+        Some(s) => display_path(s, rel.as_deref()),
+    };
+    let mut out = String::new();
+    let mut searches: Vec<serde_json::Value> = Vec::new();
+    let mut any = false;
+    let mut failed = false;
+    for q in &req.queries {
+        let t0 = Instant::now();
+        let r = match crate::grep::search_blocking(q, &req.opts, Duration::from_secs(req.timeout)) {
+            Ok(r) => r,
+            Err(e) => {
+                failed = true;
+                out.push_str(&format!("mx grep: {q}: {e}\n"));
+                continue;
+            }
+        };
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let total = r.files.len();
+        let total_matches: u64 = r.files.iter().map(|f| f.matches as u64).sum();
+        any |= total > 0;
+        let shown = &r.files[..total.min(req.limit)];
+        if req.json {
+            searches.push(serde_json::json!({
+                "query": q,
+                "scope": req.opts.scope,
+                "files_matched": total,
+                "matches": total_matches,
+                "files_scanned": r.scanned,
+                "timed_out": r.timed_out,
+                "ms": (ms * 10.0).round() / 10.0,
+                "results": shown.iter().map(|f| serde_json::json!({
+                    "path": display_path(&f.path, rel.as_deref()),
+                    "matches": f.matches,
+                    "definition": f.definition,
+                    "score": (f.score as f64).round(),
+                    "modified": fmt_date(f.modified),
+                    "lines": if req.paths_only { Vec::new() } else {
+                        best_lines(f, req.lines).into_iter().map(|l| serde_json::json!({ "line": l.line, "text": l.text.trim() })).collect::<Vec<_>>()
+                    },
+                })).collect::<Vec<_>>(),
+            }));
+            continue;
+        }
+        out.push_str(&format!(
+            "# mx grep (beta) \"{q}\" in {where_}: {} file{}, {} match{} · {} files scanned · {:.0} ms · best first\n",
+            group(total as u64),
+            plural(total as u64),
+            group(total_matches),
+            if total_matches == 1 { "" } else { "es" },
+            group(r.scanned as u64),
+            ms
+        ));
+        if r.timed_out {
+            out.push_str(&format!("(stopped after {} s: results incomplete; narrow with -i or raise --timeout)\n", req.timeout));
+        }
+        for f in shown {
+            let p = display_path(&f.path, rel.as_deref());
+            if req.paths_only {
+                out.push_str(&p);
+                out.push('\n');
+                continue;
+            }
+            out.push_str(&format!("{p}  ({} match{}{})\n", f.matches, if f.matches == 1 { "" } else { "es" }, if f.definition { ", definition" } else { "" }));
+            let lines = best_lines(f, req.lines);
+            for l in &lines {
+                out.push_str(&format!("  {}: {}\n", l.line, l.text.trim()));
+            }
+            let more = (f.matches as usize).saturating_sub(lines.len());
+            if more > 0 && req.lines > 0 {
+                out.push_str(&format!("  … +{more} more in this file\n"));
+            }
+        }
+        if total > shown.len() {
+            out.push_str(&format!("… +{} more files (-n to show)\n", total - shown.len()));
+        }
+    }
+    if req.json {
+        let v = serde_json::json!({ "beta": true, "searches": searches });
+        out = format!("{}\n{out}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    }
+    (if any { 0 } else if failed { 2 } else { 1 }, out)
+}
+
+/// Up to `n` lines, whole-phrase matches first, shown in file order.
+fn best_lines(f: &crate::grep::FileHit, n: usize) -> Vec<&crate::grep::LineHit> {
+    let mut v: Vec<&crate::grep::LineHit> = f.lines.iter().filter(|l| l.phrase).chain(f.lines.iter().filter(|l| !l.phrase)).take(n).collect();
+    v.sort_by_key(|l| l.line);
+    v
 }
 
 fn plural(n: u64) -> &'static str {
@@ -575,6 +769,18 @@ mod tests {
         assert_eq!(display_path(r"C:\a\b\c.txt", Some(r"c:\A")), r"b\c.txt");
         assert_eq!(display_path(r"C:\ab\c.txt", Some(r"C:\a")), r"C:\ab\c.txt");
         assert_eq!(display_path(r"C:\x.txt", Some(r"C:\")), r"x.txt");
+    }
+
+    #[test]
+    fn grep_args() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let r = parse_grep_args(r"C:\w", &a(&["-n", "5", "-w", "foo bar"])).unwrap();
+        assert_eq!(r.limit, 5);
+        assert!(r.opts.whole_word);
+        assert_eq!(r.opts.scope.as_deref(), Some(r"C:\w"));
+        assert_eq!(r.queries, vec!["foo bar"]);
+        assert!(parse_grep_args(r"C:\w", &a(&["--everywhere", "x"])).unwrap().opts.scope.is_none());
+        assert!(parse_grep_args("", &a(&["x"])).is_err());
     }
 
     #[test]
