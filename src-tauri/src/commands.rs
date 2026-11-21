@@ -325,3 +325,40 @@ pub async fn invalidate_dir_sizes(paths: Vec<String>) -> AppResult<()> {
     crate::dirsize::invalidate_many(&paths);
     Ok(())
 }
+
+// ── storage page ────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn disk_tree(path: String) -> AppResult<Option<crate::disk::DiskTree>> {
+    blocking(move || Ok(crate::disk::tree(&path))).await
+}
+
+#[tauri::command]
+pub async fn disk_suggest(scope: Option<String>, min_size: u64, limit: usize) -> AppResult<Option<crate::disk::Suggestions>> {
+    blocking(move || Ok(crate::disk::suggest(scope.as_deref(), min_size, limit.min(5_000)))).await
+}
+
+#[tauri::command]
+pub async fn disk_forget(paths: Vec<String>) -> AppResult<()> {
+    blocking(move || {
+        crate::disk::forget(&paths);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn disk_release() -> AppResult<()> {
+    crate::disk::release();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn recycle_bin_info() -> AppResult<crate::disk::RecycleBin> {
+    SHELL.run(crate::disk::recycle_bin).await
+}
+
+#[tauri::command]
+pub async fn empty_recycle_bin() -> AppResult<()> {
+    SHELL.run(crate::disk::empty_recycle_bin).await?
+}

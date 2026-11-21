@@ -190,6 +190,12 @@ pub fn frecency_snapshot() -> Vec<(String, f64)> {
     s.st.frecent.values().map(|e| (e.path.clone(), decay(e.score, e.last, now))).collect()
 }
 
+/// Lowercase path → when it was last opened in MyExplorer (ms).
+pub fn last_visits() -> HashMap<String, i64> {
+    let s = STORE.lock();
+    s.st.frecent.values().map(|e| (e.path.to_lowercase(), e.last)).collect()
+}
+
 pub fn get_frecent(kind: &str, limit: usize) -> Vec<Frecent> {
     let now = now_ms();
     let mut v: Vec<Frecent> = {

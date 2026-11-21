@@ -6,7 +6,7 @@ pub mod search;
 pub mod store;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -71,6 +71,20 @@ static WALK_POOL: LazyLock<Option<rayon::ThreadPool>> = LazyLock::new(store::wal
 /// Separate pool: live (on-demand) walks must not queue behind the full-drive walk.
 static LIVE_POOL: LazyLock<Option<rayon::ThreadPool>> = LazyLock::new(store::walk_pool);
 static BUILDING: LazyLock<Mutex<Option<Arc<Mutex<Index>>>>> = LazyLock::new(|| Mutex::new(None));
+/// Bumped (while the write lock is held) every time the index contents change.
+static VERSION: AtomicU64 = AtomicU64::new(1);
+/// Bumped when the whole index is replaced (entry ids change meaning).
+static EPOCH: AtomicU64 = AtomicU64::new(1);
+
+/// Current epoch; read it inside `read` for a value consistent with the index.
+pub(crate) fn epoch() -> u64 {
+    EPOCH.load(Ordering::Acquire)
+}
+
+fn changed() {
+    let v = VERSION.fetch_add(1, Ordering::AcqRel) + 1;
+    emit("disk:changed", v);
+}
 
 // ── engine ──────────────────────────────────────────────────────────────────
 
@@ -140,8 +154,13 @@ pub fn start() {
 
         if let Some(ix) = CacheSource.build(&roots, &ENGINE.cancel) {
             let n = ix.live_count();
-            *ENGINE.idx.write() = ix;
-            ENGINE.has_data.store(true, Ordering::Release);
+            {
+                let mut g = ENGINE.idx.write();
+                *g = ix;
+                EPOCH.fetch_add(1, Ordering::AcqRel);
+                ENGINE.has_data.store(true, Ordering::Release);
+                changed();
+            }
             set_status("building", "cache", n);
         }
 
@@ -182,8 +201,13 @@ fn rebuild(roots: &[String]) {
     });
     if let Some(ix) = src.build(roots, &ENGINE.cancel) {
         let n = ix.live_count();
-        *ENGINE.idx.write() = ix;
-        ENGINE.has_data.store(true, Ordering::Release);
+        {
+            let mut g = ENGINE.idx.write();
+            *g = ix;
+            EPOCH.fetch_add(1, Ordering::AcqRel);
+            ENGINE.has_data.store(true, Ordering::Release);
+            changed();
+        }
         ENGINE.dirty.store(true, Ordering::Relaxed);
         ENGINE.rebuilding.store(false, Ordering::Release);
         set_status("ready", src.kind(), n);
@@ -308,6 +332,7 @@ fn applier() {
         {
             let mut ix = ENGINE.idx.write();
             apply(&mut ix, &evs, &metas);
+            changed();
         }
         ENGINE.dirty.store(true, Ordering::Relaxed);
     }
@@ -589,6 +614,44 @@ pub fn wait_searchable(timeout: Duration) -> bool {
 /// Warm up the rayon pool so the first keystroke is fast.
 pub fn warmup() {
     rayon::spawn(|| {});
+}
+
+// ── storage analysis support ─────────────────────────────────────────────────
+
+/// Run `f` on the index with its current version, under the read lock. None until the
+/// first data is available (cache loaded or first build finished).
+pub(crate) fn read<R>(f: impl FnOnce(&Index, u64) -> R) -> Option<R> {
+    if !ENGINE.has_data.load(Ordering::Acquire) {
+        return None;
+    }
+    let ix = ENGINE.idx.read();
+    Some(f(&ix, VERSION.load(Ordering::Acquire)))
+}
+
+/// Drop paths that no longer exist right away (after a delete), instead of waiting for the
+/// watcher's batch, so views computed from the index are correct immediately.
+pub(crate) fn forget(paths: &[String]) {
+    if !ENGINE.has_data.load(Ordering::Acquire) {
+        return;
+    }
+    let gone: Vec<&String> = paths.iter().filter(|p| crate::fs::attributes(p).is_none()).collect();
+    if gone.is_empty() {
+        return;
+    }
+    let mut ix = ENGINE.idx.write();
+    let mut hit = false;
+    for p in gone {
+        if let Some(id) = ix.resolve(p) {
+            if !ix.is_root(id) {
+                ix.mark_deleted(id);
+                hit = true;
+            }
+        }
+    }
+    if hit {
+        ENGINE.dirty.store(true, Ordering::Relaxed);
+        changed();
+    }
 }
 
 // ── content-search support ──────────────────────────────────────────────────

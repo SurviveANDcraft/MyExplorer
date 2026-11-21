@@ -5,6 +5,7 @@ mod agent_setup;
 mod archive;
 mod commands;
 mod dirsize;
+mod disk;
 mod error;
 mod fs;
 mod grep;
@@ -104,6 +105,12 @@ fn main() {
             commands::release_single_instance_lock,
             commands::open_notices,
             commands::invalidate_dir_sizes,
+            commands::disk_tree,
+            commands::disk_suggest,
+            commands::disk_forget,
+            commands::disk_release,
+            commands::recycle_bin_info,
+            commands::empty_recycle_bin,
         ])
         .setup(|app| {
             let _ = util::APP.set(app.handle().clone());

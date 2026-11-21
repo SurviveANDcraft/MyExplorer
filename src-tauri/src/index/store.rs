@@ -371,9 +371,9 @@ pub struct WalkCtl<'a> {
     pub exclude: bool,
 }
 
-const EXCLUDED_NAMES: &[&str] =
+pub(crate) const EXCLUDED_NAMES: &[&str] =
     &["node_modules", ".git", "$recycle.bin", "system volume information", "winsxs", "__pycache__", ".pnpm-store"];
-const EXCLUDED_WINDOWS: &[&str] = &["servicing", "installer", "softwaredistribution", "assembly"];
+pub(crate) const EXCLUDED_WINDOWS: &[&str] = &["servicing", "installer", "softwaredistribution", "assembly"];
 
 /// Directories that are indexed as entries but never descended into: huge, and never what a
 /// user is looking for. Searching *inside* one falls back to a live walk.
