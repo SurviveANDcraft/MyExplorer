@@ -20,7 +20,7 @@ import { cmpSemver, readVersions } from "./versions.mjs";
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith("--")));
 const publish = flags.has("--publish");
-const notesFileArg = argv[argv.indexOf("--notes-file") + 1];
+const notesFileArg = argv.includes("--notes-file") ? argv[argv.indexOf("--notes-file") + 1] : undefined;
 const notesLine = argv.find((a, i) => !a.startsWith("--") && argv[i - 1] !== "--notes-file");
 
 const step = (s) => console.log(`\n\x1b[1;36m▸ ${s}\x1b[0m`);
